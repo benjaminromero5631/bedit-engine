@@ -62,8 +62,8 @@ export const PRESET = {
     enabled: true,
     everySecMin: 2.0,
     everySecMax: 3.5,
-    scaleMin: 1.15,                // se nota
-    scaleMax: 1.25,
+    scaleMin: 1.10,                // se nota
+    scaleMax: 1.17,
     fastSec: 0.18,                 // zoom rápido tipo golpe
     slowSec: 0.35,                 // zoom "lento" (igual ágil)
     snapWindowSec: 0.8,            // se pega al inicio de frase más cercano

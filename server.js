@@ -122,9 +122,10 @@ const server = http.createServer(async (req, res) => {
       if (sub === 'envelope' && req.method === 'GET') {
         // diagnóstico: energía del audio cada 10 ms (dB) para afinar cortes
         const buf = await fsp.readFile(path.join(dir, 'audio16k.wav'));
-        const at = buf.indexOf('data'); const pcm = buf.subarray(at + 8);
-        const n = Math.floor(pcm.length / 2); const f = new Float32Array(n);
-        for (let i = 0; i < n; i++) f[i] = pcm.readInt16LE(i * 2) / 32768;
+        const at = buf.indexOf('data');
+        const pcm = buf.subarray(at + 8);
+        const n = Math.floor(pcm.length / 4); const f = new Float32Array(n);
+        for (let i = 0; i < n; i++) f[i] = pcm.readFloatLE(i * 4);
         const db = Array.from(frameDb(f, 16000, 0.01)).map((x) => Math.round(x * 10) / 10);
         return send(res, 200, { hop: 0.01, db });
       }

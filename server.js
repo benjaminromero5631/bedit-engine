@@ -66,6 +66,13 @@ function streamFile(req, res, file, type, name) {
   }
 }
 
+async function fireApproveHook(id, job) {
+  const hook = process.env.APPROVE_WEBHOOK;
+  if (!hook) return;
+  try { await fetch(hook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, name: job.name, resultUrl: `/jobs/${id}/result` }), signal: AbortSignal.timeout(15000) }); }
+  catch (e) { console.error('approve webhook falló', e.message); }
+}
+
 const safeName = (s) => String(s || 'video').replace(/\.[^.]+$/, '').replace(/[^\w\-. áéíóúñÁÉÍÓÚÑ]/g, '_').slice(0, 80);
 
 const server = http.createServer(async (req, res) => {
@@ -108,10 +115,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/jobs' && req.method === 'GET') {
       const out = [];
-      for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, approved: !!j.approved, createdAt: j.createdAt }); }
+      for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, approved: !!j.approved, deleted: !!j.deleted, createdAt: j.createdAt }); }
       return send(res, 200, { jobs: out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) });
     }
-    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope|review|edit|approve))?$/);
+    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope|review|edit|approve|state))?$/);
     if (m) {
       const [, id, sub] = m;
       const job = await readJob(id);
@@ -127,12 +134,12 @@ const server = http.createServer(async (req, res) => {
         const { callbackUrl, ...pub } = job;
         let project = null;
         try { project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8')); } catch {}
-        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, editable: false, words: [] };
+        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, deleted: !!pub.deleted, editable: false, words: [] };
         if (project) {
           const { keep } = keepFromCuts(project.cuts || [], project.info.duration);
           const inKeep = (t) => keep.some((k) => t >= k.s && t < k.e);
           const toks = [];
-          (project.words || []).forEach((w, i) => toks.push({ t: w.text || '?', start: w.start, i, x: w.x || 0, s: w.s ? 1 : 0, o: inKeep(w.start) ? Math.round(srcToOut(keep, w.start) * 100) / 100 : -1 }));
+          (project.words || []).forEach((w, i) => toks.push({ t: w.text || '?', start: w.start, i, x: w.x || 0, s: w.s ? 1 : 0, e: w.e ? 1 : 0, o: inKeep(w.start) ? Math.round(srcToOut(keep, w.start) * 100) / 100 : -1 }));
           (project.fillers || []).forEach((f) => toks.push({ t: 'eh', start: f.start, f: 1, i: -1, x: 0, s: 0, o: -1 }));
           toks.sort((a, b) => a.start - b.start);
           out.words = toks;
@@ -147,16 +154,27 @@ const server = http.createServer(async (req, res) => {
         const project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8'));
         if (!project.words?.length || !project.words[0].raw) return send(res, 400, { error: 'Este video es de una versión anterior y no se puede editar por palabras' });
         const removed = (Array.isArray(body.removed) ? body.removed : []).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < project.words.length);
-        const next = await editJob({ dir, project, removed });
+        const edits = {};
+        if (body.edits && typeof body.edits === 'object') for (const [k, v] of Object.entries(body.edits)) { const n = Number(k); if (Number.isInteger(n) && n >= 0 && n < project.words.length && typeof v === 'string') edits[n] = v.slice(0, 80); }
+        const next = await editJob({ dir, project, removed, edits });
         await updateJob(id, { approved: false });
         await enqueue(id, 'rerender', next);
         return send(res, 202, { id, status: 'en cola' });
       }
+      if (sub === 'state' && req.method === 'POST') {
+        let body;
+        try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        const st = body.state;
+        if (!['pendiente', 'aprobado', 'eliminado'].includes(st)) return send(res, 400, { error: 'Estado no válido' });
+        if (st === 'aprobado' && job.status !== 'listo') return send(res, 409, { error: 'Aún no está listo' });
+        await updateJob(id, { approved: st === 'aprobado', deleted: st === 'eliminado' });
+        if (st === 'aprobado') await fireApproveHook(id, job);
+        return send(res, 200, { ok: true, state: st });
+      }
       if (sub === 'approve' && req.method === 'POST') {
         if (job.status !== 'listo') return send(res, 409, { error: 'Aún no está listo' });
         await updateJob(id, { approved: true });
-        const hook = process.env.APPROVE_WEBHOOK;
-        if (hook) { try { await fetch(hook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, name: job.name, resultUrl: `/jobs/${id}/result` }), signal: AbortSignal.timeout(15000) }); } catch (e) { console.error('approve webhook falló', e.message); } }
+        await fireApproveHook(id, job);
         return send(res, 200, { ok: true });
       }
       if (sub === 'project' && req.method === 'GET') return streamFile(req, res, path.join(dir, 'project.json'), 'application/json', `${job.name || id}.project.json`);

@@ -4,8 +4,8 @@
 export const CUT_CFG = {
   hop: 0.01,            // s por cuadro de energía
   aboveFloorDb: 12,     // la voz tiene que superar el ruido de fondo por esto
-  thrMinDb: -52,        // límites del umbral (dBFS)
-  thrMaxDb: -32,
+  thrMinDb: -42,        // límites del umbral (dBFS)
+  thrMaxDb: -34,
   closeGap: 0.18,       // huecos de voz más cortos que esto se rellenan (respiros dentro de una palabra)
   minBlip: 0.10,        // ruidos más cortos que esto no cuentan como voz
   wordPadBefore: 0.03,

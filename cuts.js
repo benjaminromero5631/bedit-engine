@@ -25,7 +25,7 @@ export const CUT_PRESETS = {
   fuerte: { ...CUT_CFG, aboveFloorDb: 14, requireWords: true, wordPadBefore: 0.08, wordPadAfter: 0.14, padLead: 0.08, padTail: 0.13 },
 };
 
-function frameDb(audio, sr, hop) {
+export function frameDb(audio, sr, hop) {
   const n = Math.floor(audio.length / (sr * hop));
   const win = Math.round(sr * hop * 2);
   const hopS = Math.round(sr * hop);

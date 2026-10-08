@@ -1,0 +1,611 @@
+{
+ "name": "B Edit · automático",
+ "nodes": [
+  {
+   "parameters": {
+    "content": "## B Edit · 1) Entrada\nSube un video a la carpeta **B Edit / Entrada** de Drive y se manda solo al motor.\n\n1. En **Drive: video nuevo** elige tu credencial de Google Drive y la carpeta Entrada.\n2. Rellena los datos en **Config A** y **Config B** (son los mismos; están duplicados a propósito).",
+    "height": 220,
+    "width": 420
+   },
+   "id": "e8d6e05b-39cd-4183-8e1c-ab5873d39847",
+   "name": "Nota A",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    -200,
+    -60
+   ]
+  },
+  {
+   "parameters": {
+    "pollTimes": {
+     "item": [
+      {
+       "mode": "everyMinute"
+      }
+     ]
+    },
+    "triggerOn": "specificFolder",
+    "folderToWatch": {
+     "__rl": true,
+     "value": "ID_CARPETA_ENTRADA",
+     "mode": "id"
+    },
+    "event": "fileCreated",
+    "options": {}
+   },
+   "id": "1a46d0cb-abe3-494f-920b-62bc0183b804",
+   "name": "Drive: video nuevo",
+   "type": "n8n-nodes-base.googleDriveTrigger",
+   "typeVersion": 1,
+   "position": [
+    260,
+    200
+   ]
+  },
+  {
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": false,
+      "leftValue": "",
+      "typeValidation": "loose"
+     },
+     "conditions": [
+      {
+       "id": "5abb8c16-904a-4ba4-a321-7033436bfadc",
+       "leftValue": "={{ $json.mimeType }}",
+       "rightValue": "video/",
+       "operator": {
+        "type": "string",
+        "operation": "startsWith"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "a087f3ea-14b1-48ef-8eed-23195d5bb6e2",
+   "name": "¿Es video?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    480,
+    200
+   ]
+  },
+  {
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "441cf598-49b5-42c1-9293-def05de876b0",
+       "name": "engineUrl",
+       "value": "https://TU-MOTOR.tudominio.com",
+       "type": "string"
+      },
+      {
+       "id": "5b47368e-4c21-43e9-8dc3-3841a9a5c241",
+       "name": "engineToken",
+       "value": "PEGA_AQUI_EL_BEDIT_TOKEN",
+       "type": "string"
+      },
+      {
+       "id": "3df3b33e-7c62-42ba-b5ba-3d93b407ecae",
+       "name": "callbackUrl",
+       "value": "https://TU-N8N.tudominio.com/webhook/bedit-done",
+       "type": "string"
+      },
+      {
+       "id": "fa3f3ebd-73c9-40e8-a62d-9d325339d5ce",
+       "name": "outFolderId",
+       "value": "ID_CARPETA_BORRADORES",
+       "type": "string"
+      },
+      {
+       "id": "b7a856c6-6024-4fa1-9690-c540120a5dff",
+       "name": "outFolderLabel",
+       "value": "Borradores",
+       "type": "string"
+      },
+      {
+       "id": "f587bc94-d162-4960-8047-2851724be77d",
+       "name": "evoUrl",
+       "value": "https://TU-EVOLUTION.tudominio.com",
+       "type": "string"
+      },
+      {
+       "id": "db059be9-573a-4730-bd7d-e385ee3cab73",
+       "name": "evoInstance",
+       "value": "NOMBRE_INSTANCIA_EVOLUTION",
+       "type": "string"
+      },
+      {
+       "id": "947f0f0b-9260-4fc5-811a-d935fd6fba25",
+       "name": "evoApiKey",
+       "value": "APIKEY_DE_ESA_INSTANCIA",
+       "type": "string"
+      },
+      {
+       "id": "27e4da29-15bb-4104-882f-9975a314cce1",
+       "name": "notifyNumber",
+       "value": "56912345678",
+       "type": "string"
+      }
+     ]
+    },
+    "includeOtherFields": true,
+    "options": {}
+   },
+   "id": "7c9f1412-0208-4e47-acda-427de5c169ea",
+   "name": "Config A",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    700,
+    200
+   ]
+  },
+  {
+   "parameters": {
+    "amount": 30,
+    "unit": "seconds"
+   },
+   "id": "41b98acd-91bd-4d17-9b3f-823bede80c69",
+   "name": "Esperar que termine de subir",
+   "type": "n8n-nodes-base.wait",
+   "typeVersion": 1.1,
+   "position": [
+    920,
+    200
+   ],
+   "webhookId": "f0ed36ec-e716-42e2-94a8-ee0709cf3ddc"
+  },
+  {
+   "parameters": {
+    "operation": "download",
+    "fileId": {
+     "__rl": true,
+     "value": "={{ $('Drive: video nuevo').item.json.id }}",
+     "mode": "id"
+    },
+    "options": {}
+   },
+   "id": "2373aa15-5ae1-462e-9dc7-82b69f226f41",
+   "name": "Drive: descargar",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    1140,
+    200
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Config A').item.json.engineUrl }}/jobs",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Authorization",
+       "value": "=Bearer {{ $('Config A').item.json.engineToken }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "contentType": "multipart-form-data",
+    "bodyParameters": {
+     "parameters": [
+      {
+       "parameterType": "formBinaryData",
+       "name": "video",
+       "inputDataFieldName": "data"
+      },
+      {
+       "name": "name",
+       "value": "={{ $('Drive: video nuevo').item.json.name }}"
+      },
+      {
+       "name": "meta",
+       "value": "={{ JSON.stringify({ baseName: $('Drive: video nuevo').item.json.name.replace(/\\.[^.]+$/, ''), fileId: $('Drive: video nuevo').item.json.id }) }}"
+      },
+      {
+       "name": "options",
+       "value": "{\"sensitivity\":\"normal\"}"
+      },
+      {
+       "name": "callbackUrl",
+       "value": "={{ $('Config A').item.json.callbackUrl }}"
+      }
+     ]
+    },
+    "options": {
+     "timeout": 3600000
+    }
+   },
+   "id": "fe3f3c02-805d-411b-ad30-35764bd9411d",
+   "name": "Motor: enviar video",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    1360,
+    200
+   ]
+  },
+  {
+   "parameters": {
+    "content": "## B Edit · 2) Resultado\nEl motor avisa aquí cuando termina. Sube el video a la carpeta de salida y te escribe por WhatsApp.\n\nActiva el workflow (interruptor arriba a la derecha) para que esta URL funcione: `/webhook/bedit-done`.",
+    "height": 200,
+    "width": 420
+   },
+   "id": "21dc8f93-9f94-4845-94b4-63cacc3c1e9e",
+   "name": "Nota B",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    -200,
+    520
+   ]
+  },
+  {
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "bedit-done",
+    "responseMode": "onReceived",
+    "options": {}
+   },
+   "id": "7712ff74-f838-42de-a08b-3bcaeb013d1b",
+   "name": "Motor avisa",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    260,
+    720
+   ],
+   "webhookId": "bc6e9715-7355-4872-8e6d-e0079c10de3a"
+  },
+  {
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "feaefc78-cb43-4281-830d-4c2aca4e32c1",
+       "name": "engineUrl",
+       "value": "https://TU-MOTOR.tudominio.com",
+       "type": "string"
+      },
+      {
+       "id": "5b3ad261-c228-4292-a900-28ec985c9292",
+       "name": "engineToken",
+       "value": "PEGA_AQUI_EL_BEDIT_TOKEN",
+       "type": "string"
+      },
+      {
+       "id": "43851eb0-91c6-408e-b727-2647e9b412ae",
+       "name": "callbackUrl",
+       "value": "https://TU-N8N.tudominio.com/webhook/bedit-done",
+       "type": "string"
+      },
+      {
+       "id": "666aac4e-6cd5-4f3b-b1c7-efd733d663ab",
+       "name": "outFolderId",
+       "value": "ID_CARPETA_BORRADORES",
+       "type": "string"
+      },
+      {
+       "id": "daeb09db-2684-4541-a542-b5e33687f55a",
+       "name": "outFolderLabel",
+       "value": "Borradores",
+       "type": "string"
+      },
+      {
+       "id": "1b1ee6b5-0842-4df6-a372-b969a18af7b4",
+       "name": "evoUrl",
+       "value": "https://TU-EVOLUTION.tudominio.com",
+       "type": "string"
+      },
+      {
+       "id": "fe7bc997-2209-4f3f-a257-025e680e5dcc",
+       "name": "evoInstance",
+       "value": "NOMBRE_INSTANCIA_EVOLUTION",
+       "type": "string"
+      },
+      {
+       "id": "9c133127-958f-4191-8327-6a19b039da84",
+       "name": "evoApiKey",
+       "value": "APIKEY_DE_ESA_INSTANCIA",
+       "type": "string"
+      },
+      {
+       "id": "c0cdbdfa-7c2a-494f-96ff-27be2b335a38",
+       "name": "notifyNumber",
+       "value": "56912345678",
+       "type": "string"
+      }
+     ]
+    },
+    "includeOtherFields": true,
+    "options": {}
+   },
+   "id": "152b7e51-4e4a-4091-9863-c2ae29d1fe72",
+   "name": "Config B",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    480,
+    720
+   ]
+  },
+  {
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict"
+     },
+     "conditions": [
+      {
+       "id": "e0840cec-3877-4864-b020-154b38e4b6c4",
+       "leftValue": "={{ $('Motor avisa').item.json.body.status }}",
+       "rightValue": "listo",
+       "operator": {
+        "type": "string",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "41ee1b83-7e8f-497b-935f-501dc42abccb",
+   "name": "¿Salió bien?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    700,
+    720
+   ]
+  },
+  {
+   "parameters": {
+    "url": "={{ $('Config B').item.json.engineUrl }}{{ $('Motor avisa').item.json.body.resultUrl }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Authorization",
+       "value": "=Bearer {{ $('Config B').item.json.engineToken }}"
+      }
+     ]
+    },
+    "options": {
+     "response": {
+      "response": {
+       "responseFormat": "file",
+       "outputPropertyName": "data"
+      }
+     },
+     "timeout": 3600000
+    }
+   },
+   "id": "b9e11602-ac3e-4161-b288-855f4f2b17b2",
+   "name": "Motor: bajar resultado",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    920,
+    620
+   ]
+  },
+  {
+   "parameters": {
+    "name": "={{ $('Motor avisa').item.json.body.meta.baseName }}_bedit.mp4",
+    "driveId": {
+     "__rl": true,
+     "value": "My Drive",
+     "mode": "list",
+     "cachedResultName": "My Drive"
+    },
+    "folderId": {
+     "__rl": true,
+     "value": "={{ $('Config B').item.json.outFolderId }}",
+     "mode": "id"
+    },
+    "options": {}
+   },
+   "id": "e7c744d4-f60a-49d9-b968-f3e7f9fb3a6f",
+   "name": "Drive: subir resultado",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    1140,
+    620
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Config B').item.json.evoUrl }}/message/sendText/{{ $('Config B').item.json.evoInstance }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "apikey",
+       "value": "={{ $('Config B').item.json.evoApiKey }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ number: $('Config B').item.json.notifyNumber, text: '✅ Tu video está listo: ' + $('Motor avisa').item.json.body.meta.baseName + '\\nLo dejé en ' + $('Config B').item.json.outFolderLabel + '.\\n' + ($json.webViewLink || '') }) }}",
+    "options": {}
+   },
+   "id": "0dffd948-2cd9-4fd2-9bc8-cd4e4ca3f6e0",
+   "name": "WhatsApp: listo",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    1360,
+    620
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $('Config B').item.json.evoUrl }}/message/sendText/{{ $('Config B').item.json.evoInstance }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "apikey",
+       "value": "={{ $('Config B').item.json.evoApiKey }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ number: $('Config B').item.json.notifyNumber, text: '❌ No pude editar: ' + ($('Motor avisa').item.json.body.meta?.baseName || '') + '\\n' + ($('Motor avisa').item.json.body.error || 'error desconocido').slice(0, 300) }) }}",
+    "options": {}
+   },
+   "id": "81d33461-bcea-455b-baa7-3635f6c2f9e0",
+   "name": "WhatsApp: falló",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    920,
+    860
+   ]
+  }
+ ],
+ "connections": {
+  "Drive: video nuevo": {
+   "main": [
+    [
+     {
+      "node": "¿Es video?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Config A": {
+   "main": [
+    [
+     {
+      "node": "Esperar que termine de subir",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Esperar que termine de subir": {
+   "main": [
+    [
+     {
+      "node": "Drive: descargar",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Drive: descargar": {
+   "main": [
+    [
+     {
+      "node": "Motor: enviar video",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "¿Es video?": {
+   "main": [
+    [
+     {
+      "node": "Config A",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Motor avisa": {
+   "main": [
+    [
+     {
+      "node": "Config B",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Config B": {
+   "main": [
+    [
+     {
+      "node": "¿Salió bien?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "¿Salió bien?": {
+   "main": [
+    [
+     {
+      "node": "Motor: bajar resultado",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "WhatsApp: falló",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Motor: bajar resultado": {
+   "main": [
+    [
+     {
+      "node": "Drive: subir resultado",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Drive: subir resultado": {
+   "main": [
+    [
+     {
+      "node": "WhatsApp: listo",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1"
+ },
+ "pinData": {},
+ "meta": {
+  "templateCredsSetupCompleted": false
+ }
+}

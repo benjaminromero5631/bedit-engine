@@ -198,11 +198,16 @@ export function makePlan({ audio16k, sr = 16000, chunks, duration, sensitivity =
   return planFromWords({ audio16k, sr, words, fillers, duration, sensitivity, seed });
 }
 
-/** Re-plan tras revisar: removed = índices de palabras que Benjamin quiere fuera. */
-export function editPlan({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, removed }) {
+/** Re-plan tras revisar: removed = índices de palabras que Benjamin quiere fuera; edits = {índice: texto corregido}. */
+export function editPlan({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, removed, edits = {} }) {
   const ws = words.map((w, i) => {
     const c = { ...w };
     if (removed.has(i)) c.x = c.x || 'user'; else delete c.x;
+    const t = edits[i];
+    if (typeof t === 'string' && t.trim() && stripPunct(t.trim()) !== stripPunct(w.raw || w.text)) {
+      const tail = (String(w.raw || '').match(/[.?!…,;:]+$/) || [''])[0];
+      c.text = stripPunct(t.trim()); c.raw = t.trim() + (/[.?!…,;:]$/.test(t.trim()) ? '' : tail); c.e = true;
+    }
     return c;
   });
   return planFromWords({ audio16k, sr, words: ws, fillers, duration, sensitivity, seed });

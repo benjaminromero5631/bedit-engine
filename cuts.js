@@ -6,15 +6,16 @@ export const CUT_CFG = {
   aboveFloorDb: 12,     // la voz tiene que superar el ruido de fondo por esto
   thrMinDb: -52,        // límites del umbral (dBFS)
   thrMaxDb: -32,
-  closeGap: 0.30,       // huecos de voz más cortos que esto se rellenan (respiros dentro de una palabra)
+  closeGap: 0.18,       // huecos de voz más cortos que esto se rellenan (respiros dentro de una palabra)
   minBlip: 0.10,        // ruidos más cortos que esto no cuentan como voz
-  wordPadBefore: 0.05,
-  wordPadAfter: 0.10,
-  padLead: 0.10,        // respiro antes de hablar
-  padTail: 0.15,        // respiro después de hablar
-  minCut: 0.12,         // cortes más cortos que esto se ignoran
+  wordPadBefore: 0.03,
+  wordPadAfter: 0.05,
+  padLead: 0.06,        // respiro antes de hablar
+  padTail: 0.10,        // respiro después de hablar
+  minCut: 0.10,         // cortes más cortos que esto se ignoran
   fillerShrink: 0.03,
-  requireWords: false,  // true: solo se queda lo que coincide con palabras entendidas (ignora ruidos de fondo)
+  snapWordsToEnergy: true,  // ajusta inicio/fin de cada palabra al sonido real (Whisper suele alargarlas)
+  requireWords: true,   // true: solo se queda lo que coincide con palabras entendidas (ignora ruidos de fondo)
 };
 
 // Sensibilidad: qué tan agresivo es el corte
@@ -89,9 +90,29 @@ export function detectCuts(audio, sr, words, fillers, duration, cfg = CUT_CFG) {
   }
   voiced = mergeIntervals(voiced, cfg.closeGap).filter(([a, b]) => b - a >= cfg.minBlip);
 
-  // 2) sumar las palabras que Whisper entendió
-  const wordIv = words.map((w) => [Math.max(0, w.start - cfg.wordPadBefore), Math.min(duration, w.end + cfg.wordPadAfter)]);
-  if (cfg.requireWords) voiced = voiced.filter(([a, b]) => wordIv.some(([x, y]) => x < b && y > a));   // ruido sin palabras = silencio
+  // 2) sumar las palabras que Whisper entendió (ajustadas al sonido real)
+  const snapped = words.map((w) => {
+    let a = w.start, b = w.end;
+    if (cfg.snapWordsToEnergy) {
+      const i0 = Math.max(0, Math.floor((w.start - 0.05) / cfg.hop));
+      const i1 = Math.min(db.length - 1, Math.ceil((w.end + 0.12) / cfg.hop));
+      let first = -1, last = -1;
+      for (let i = i0; i <= i1; i++) if (db[i] > thr) { if (first < 0) first = i; last = i; }
+      if (first >= 0) {
+        if (first * cfg.hop > w.start + 0.02) a = first * cfg.hop;            // la palabra empezó después de lo que dice Whisper
+        if ((last + 1) * cfg.hop < w.end - 0.02) b = (last + 1) * cfg.hop;    // y terminó antes
+      }
+    }
+    return [a, b];
+  });
+  const wordIv = snapped.map(([a, b]) => [Math.max(0, a - cfg.wordPadBefore), Math.min(duration, b + cfg.wordPadAfter)]);
+  if (cfg.requireWords) {
+    // solo se queda la voz que coincide con palabras (con un margen); ruidos/respiros fuera de ellas = silencio
+    const ext = wordIv.map(([a, b]) => [a - 0.12, b + 0.12]);
+    const clipped = [];
+    for (const [a, b] of voiced) for (const [x, y] of ext) { const s = Math.max(a, x), e = Math.min(b, y); if (e - s > 0.02) clipped.push([s, e]); }
+    voiced = mergeIntervals(clipped);
+  }
   let keep = mergeIntervals([...voiced, ...wordIv]);
 
   // 3) sacar las muletillas

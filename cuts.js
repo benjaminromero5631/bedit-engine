@@ -10,8 +10,8 @@ export const CUT_CFG = {
   minBlip: 0.10,        // ruidos más cortos que esto no cuentan como voz
   wordPadBefore: 0.03,
   wordPadAfter: 0.05,
-  padLead: 0.06,        // respiro antes de hablar
-  padTail: 0.10,        // respiro después de hablar
+  padLead: 0.05,        // respiro antes de hablar
+  padTail: 0.075,        // respiro después de hablar
   minCut: 0.10,         // cortes más cortos que esto se ignoran
   fillerShrink: 0.03,
   snapWordsToEnergy: true,  // ajusta inicio/fin de cada palabra al sonido real (Whisper suele alargarlas)

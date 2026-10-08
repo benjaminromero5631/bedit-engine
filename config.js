@@ -40,8 +40,8 @@ export const PRESET = {
     shadow: { color: 'rgba(0,0,0,0.55)', blur: 0.32, offsetY: 0.06 },
   },
 
-  // Apoyo automático: aparece junto a cada zoom (in y out) con 2–3 palabras clave de la frase
-  autoSupport: { enabled: true, xAlt: [0.30, 0.70] },
+  // Apoyo automático: DESACTIVADO (solo subtítulos principales)
+  autoSupport: { enabled: false, xAlt: [0.30, 0.70] },
 
   // Frase destacada de 3 líneas (estilo "que quieren / HACER 10K / por mes")
   highlight: {
@@ -60,12 +60,12 @@ export const PRESET = {
   // Zooms automáticos (hacia el centro). Alterna zoom-in y zoom-out.
   zoom: {
     enabled: true,
-    everySecMin: 4,
-    everySecMax: 7,
-    scaleMin: 1.08,                // sutil
-    scaleMax: 1.13,                // medio
+    everySecMin: 2.0,
+    everySecMax: 3.5,
+    scaleMin: 1.15,                // se nota
+    scaleMax: 1.25,
     fastSec: 0.18,                 // zoom rápido tipo golpe
-    slowSec: 0.9,                  // zoom lento
-    snapWindowSec: 1.2,            // se pega al inicio de frase más cercano
+    slowSec: 0.35,                 // zoom "lento" (igual ágil)
+    snapWindowSec: 0.8,            // se pega al inicio de frase más cercano
   },
 };

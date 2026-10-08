@@ -53,7 +53,7 @@ function videoGraph(info, q, zooms) {
   return [
     `[0:v]setpts=PTS-STARTPTS,fps=${FPS},select='${sel}',setpts=N/(${FPS}*TB),`
     + `scale=w='trunc(${f4(W0)}*${z}/2)*2':h='trunc(${f4(H0)}*${z}/2)*2':eval=frame:flags=bicubic,`
-    + `crop=${W}:${H}:'(iw-${W})/2':'(ih-${H})/2',format=yuv420p${tm}[vz]`,
+    + `crop=${W}:${H}:'(trunc(${f4(W0)}*${z}/2)*2-${W})/2':'(trunc(${f4(H0)}*${z}/2)*2-${H})/2',format=yuv420p${tm}[vz]`,
     `[vz][1:v]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[vout]`,
   ];
 }

@@ -1,4 +1,6 @@
-import { frameDb } from './core/cuts.js';
+import { keepFromCuts, srcToOut } from './core/cuts.js';
+import { editJob } from './pipeline.js';
+import { REVIEW_HTML } from './review.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -14,7 +16,8 @@ const PORT = Number(process.env.PORT || 8080);
 const send = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
 const authed = (req) => {
   const h = req.headers.authorization || '';
-  const t = h.startsWith('Bearer ') ? h.slice(7) : '';
+  let t = h.startsWith('Bearer ') ? h.slice(7) : '';
+  if (!t) { try { t = new URL(req.url, 'http://x').searchParams.get('t') || ''; } catch {} }
   const a = Buffer.from(t), b = Buffer.from(TOKEN);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 };
@@ -70,6 +73,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
     if (p === '/health') return send(res, 200, { ok: true });
+    if (p === '/review' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(REVIEW_HTML); }
     if (!authed(req)) return send(res, 401, { error: 'No autorizado' });
 
     // ── música ──
@@ -104,10 +108,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/jobs' && req.method === 'GET') {
       const out = [];
-      for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, createdAt: j.createdAt }); }
+      for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, approved: !!j.approved, createdAt: j.createdAt }); }
       return send(res, 200, { jobs: out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) });
     }
-    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope))?$/);
+    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope|review|edit|approve))?$/);
     if (m) {
       const [, id, sub] = m;
       const job = await readJob(id);
@@ -119,15 +123,41 @@ const server = http.createServer(async (req, res) => {
         if (job.status !== 'listo') return send(res, 409, { error: `Aún no está listo (${job.status})` });
         return streamFile(req, res, path.join(dir, 'final.mp4'), 'video/mp4', `${job.name || id}_bedit.mp4`);
       }
-      if (sub === 'envelope' && req.method === 'GET') {
-        // diagnóstico: energía del audio cada 10 ms (dB) para afinar cortes
-        const buf = await fsp.readFile(path.join(dir, 'audio16k.wav'));
-        const at = buf.indexOf('data');
-        const pcm = buf.subarray(at + 8);
-        const n = Math.floor(pcm.length / 4); const f = new Float32Array(n);
-        for (let i = 0; i < n; i++) f[i] = pcm.readFloatLE(i * 4);
-        const db = Array.from(frameDb(f, 16000, 0.01)).map((x) => Math.round(x * 10) / 10);
-        return send(res, 200, { hop: 0.01, db });
+      if (sub === 'review' && req.method === 'GET') {
+        const { callbackUrl, ...pub } = job;
+        let project = null;
+        try { project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8')); } catch {}
+        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, editable: false, words: [] };
+        if (project) {
+          const { keep } = keepFromCuts(project.cuts || [], project.info.duration);
+          const inKeep = (t) => keep.some((k) => t >= k.s && t < k.e);
+          const toks = [];
+          (project.words || []).forEach((w, i) => toks.push({ t: w.text || '?', start: w.start, i, x: w.x || 0, s: w.s ? 1 : 0, o: inKeep(w.start) ? Math.round(srcToOut(keep, w.start) * 100) / 100 : -1 }));
+          (project.fillers || []).forEach((f) => toks.push({ t: 'eh', start: f.start, f: 1, i: -1, x: 0, s: 0, o: -1 }));
+          toks.sort((a, b) => a.start - b.start);
+          out.words = toks;
+          out.editable = !!(project.words && project.words.length && project.words[0].raw);
+        }
+        return send(res, 200, out);
+      }
+      if (sub === 'edit' && req.method === 'POST') {
+        if (['en cola', 'analizando', 'transcribiendo', 'renderizando'].includes(job.status)) return send(res, 409, { error: 'Todavía se está procesando' });
+        let body;
+        try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        const project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8'));
+        if (!project.words?.length || !project.words[0].raw) return send(res, 400, { error: 'Este video es de una versión anterior y no se puede editar por palabras' });
+        const removed = (Array.isArray(body.removed) ? body.removed : []).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < project.words.length);
+        const next = await editJob({ dir, project, removed });
+        await updateJob(id, { approved: false });
+        await enqueue(id, 'rerender', next);
+        return send(res, 202, { id, status: 'en cola' });
+      }
+      if (sub === 'approve' && req.method === 'POST') {
+        if (job.status !== 'listo') return send(res, 409, { error: 'Aún no está listo' });
+        await updateJob(id, { approved: true });
+        const hook = process.env.APPROVE_WEBHOOK;
+        if (hook) { try { await fetch(hook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, name: job.name, resultUrl: `/jobs/${id}/result` }), signal: AbortSignal.timeout(15000) }); } catch (e) { console.error('approve webhook falló', e.message); } }
+        return send(res, 200, { ok: true });
       }
       if (sub === 'project' && req.method === 'GET') return streamFile(req, res, path.join(dir, 'project.json'), 'application/json', `${job.name || id}.project.json`);
       if (sub === 'input' && req.method === 'GET') return streamFile(req, res, path.join(dir, job.input), 'video/quicktime', `${job.name || id}.mov`);

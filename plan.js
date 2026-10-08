@@ -49,7 +49,7 @@ export function buildPhrases(chunks) {
     if (nxt) phrases[i].end = nxt.start - phrases[i].end < 0.35 ? nxt.start : Math.min(phrases[i].end + 0.2, nxt.start);
     else phrases[i].end += 0.2;
   }
-  return { phrases, words: words.map((w) => ({ start: w.start, end: w.end })), fillers };
+  return { phrases, words: words.map((w) => ({ start: w.start, end: w.end, text: w.clean, raw: w.raw })), fillers };
 }
 
 const STOP = new Set('el la los las un una unos unas de del al a en y o u e que se su sus mi mis tu tus me te lo le les con por para como más mas pero si sí no ya es son fue era ser está esta están este esto eso esa ese muy hay he ha han yo tú vas voy va ahí ahi'.split(' '));
@@ -136,12 +136,76 @@ export function zoomAtOut(events, T) {
   return z;
 }
 
+const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zñ0-9]/g, '');
+
+/** Tomas repetidas: "hola como es… hola como e… hola como estas" → quita los intentos incompletos y deja el último. */
+export function detectRepeats(words, { maxLen = 10, maxGap = 2.0 } = {}) {
+  const n = words.length;
+  const nw = words.map((w) => norm(w.text || w.raw));
+  const out = new Set();
+  const close = (a, b) => a && b && (a === b || a.startsWith(b) || b.startsWith(a));
+  let i = 0;
+  while (i < n - 1) {
+    let hit = -1;
+    for (let j = i + 1; j <= Math.min(n - 1, i + maxLen); j++) {
+      if (words[j].start - words[j - 1].end > maxGap) break;
+      const L = j - i;
+      if (L === 1) {
+        // palabra cortada a medias y repetida completa ("buen… bueno")
+        if (nw[i].length >= 3 && nw[j] !== nw[i] && nw[j].startsWith(nw[i]) && words[j].start - words[j - 1].end < 1.0) { hit = j; break; }
+        continue;
+      }
+      if (j + L > n) continue;
+      let ok = true;
+      for (let t = 0; t < L - 1 && ok; t++) ok = nw[i + t] === nw[j + t];
+      if (ok && close(nw[i + L - 1], nw[j + L - 1])) { hit = j; break; }
+    }
+    if (hit > 0) { for (let k = i; k < hit; k++) out.add(k); i = hit; } else i++;
+  }
+  return out;
+}
+
+/** Marca como "sospechosos" arranques sueltos (1–3 palabras) separados del resto por pausas. No se quitan solos. */
+export function markSuspects(words, gapSec = 0.5) {
+  const groups = [];
+  let cur = [];
+  words.forEach((w, i) => {
+    if (cur.length && w.start - words[cur[cur.length - 1]].end > gapSec) { groups.push(cur); cur = []; }
+    cur.push(i);
+  });
+  if (cur.length) groups.push(cur);
+  groups.forEach((g, gi) => {
+    const lim = gi === 0 ? 3 : 2;
+    if (g.length <= lim && groups.length > 1 && words.length > g.length + 4) g.forEach((i) => { if (!words[i].x) words[i].s = true; });
+  });
+}
+
+/** Plan a partir de las palabras (las marcadas con `x` se sacan del video, subtítulos y cortes). */
+export function planFromWords({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1 }) {
+  const cfg = CUT_PRESETS[sensitivity] || CUT_PRESETS.normal;
+  const active = words.filter((w) => !w.x);
+  const chunks = active.map((w) => ({ text: w.raw, timestamp: [w.start, w.end] }));
+  const { phrases } = buildPhrases(chunks);
+  const cuts = detectCuts(audio16k, sr, active, fillers, duration, cfg);
+  return replan({ phrases, words, fillers, cuts, duration, seed });
+}
+
 /** Plan completo desde audio mono 16k + chunks de Whisper. */
 export function makePlan({ audio16k, sr = 16000, chunks, duration, sensitivity = 'normal', seed = 1 }) {
-  const { phrases: base, words, fillers } = buildPhrases(chunks);
-  const cfg = CUT_PRESETS[sensitivity] || CUT_PRESETS.normal;
-  const cuts = detectCuts(audio16k, sr, words, fillers, duration, cfg);
-  return replan({ phrases: base, words, fillers, cuts, duration, seed });
+  const { words, fillers } = buildPhrases(chunks);
+  detectRepeats(words).forEach((i) => { words[i].x = 'rep'; });
+  markSuspects(words);
+  return planFromWords({ audio16k, sr, words, fillers, duration, sensitivity, seed });
+}
+
+/** Re-plan tras revisar: removed = índices de palabras que Benjamin quiere fuera. */
+export function editPlan({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, removed }) {
+  const ws = words.map((w, i) => {
+    const c = { ...w };
+    if (removed.has(i)) c.x = c.x || 'user'; else delete c.x;
+    return c;
+  });
+  return planFromWords({ audio16k, sr, words: ws, fillers, duration, sensitivity, seed });
 }
 
 /** Recalcula keep/zooms/apoyos a partir de frases y cortes (también para re-render tras revisión). */

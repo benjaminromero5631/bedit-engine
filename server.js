@@ -1,3 +1,4 @@
+import { frameDb } from './core/cuts.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -106,7 +107,7 @@ const server = http.createServer(async (req, res) => {
       for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, createdAt: j.createdAt }); }
       return send(res, 200, { jobs: out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) });
     }
-    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input))?$/);
+    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope))?$/);
     if (m) {
       const [, id, sub] = m;
       const job = await readJob(id);
@@ -117,6 +118,15 @@ const server = http.createServer(async (req, res) => {
       if (sub === 'result' && req.method === 'GET') {
         if (job.status !== 'listo') return send(res, 409, { error: `Aún no está listo (${job.status})` });
         return streamFile(req, res, path.join(dir, 'final.mp4'), 'video/mp4', `${job.name || id}_bedit.mp4`);
+      }
+      if (sub === 'envelope' && req.method === 'GET') {
+        // diagnóstico: energía del audio cada 10 ms (dB) para afinar cortes
+        const buf = await fsp.readFile(path.join(dir, 'audio16k.wav'));
+        const at = buf.indexOf('data'); const pcm = buf.subarray(at + 8);
+        const n = Math.floor(pcm.length / 2); const f = new Float32Array(n);
+        for (let i = 0; i < n; i++) f[i] = pcm.readInt16LE(i * 2) / 32768;
+        const db = Array.from(frameDb(f, 16000, 0.01)).map((x) => Math.round(x * 10) / 10);
+        return send(res, 200, { hop: 0.01, db });
       }
       if (sub === 'project' && req.method === 'GET') return streamFile(req, res, path.join(dir, 'project.json'), 'application/json', `${job.name || id}.project.json`);
       if (sub === 'input' && req.method === 'GET') return streamFile(req, res, path.join(dir, job.input), 'video/quicktime', `${job.name || id}.mov`);

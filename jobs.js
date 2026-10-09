@@ -83,6 +83,21 @@ async function notify(job) {
   console.error('No se pudo avisar al callback de', job.id);
 }
 
+/** Aviso al celular (ntfy). Solo si existe NTFY_TOPIC en el entorno. */
+async function push(job) {
+  const topic = process.env.NTFY_TOPIC;
+  if (!topic) return;
+  const ok = job.status === 'listo';
+  const base = process.env.PUBLIC_URL || 'https://godkeys-bedit-engine.djq22s.easypanel.host';
+  const body = (job.name || job.id) + (ok ? '' : ': ' + String(job.error || 'error').slice(0, 150));
+  try {
+    await fetch('https://ntfy.sh/' + encodeURIComponent(topic), {
+      method: 'POST', body, signal: AbortSignal.timeout(15000),
+      headers: { Title: ok ? 'Video listo para revisar' : 'Fallo un video', Tags: ok ? 'white_check_mark' : 'warning', Click: base + '/review' },
+    });
+  } catch (e) { console.error('ntfy falló', e.message); }
+}
+
 async function pump() {
   if (running) return;
   running = true;
@@ -111,6 +126,7 @@ async function pump() {
     }
     await saveJob(job);
     await notify(job);
+    await push(job);
   }
   running = false;
 }

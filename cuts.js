@@ -167,11 +167,13 @@ export function keepFromCuts(cuts, duration) {
 export function srcToOut(keep, t) {
   if (!keep.length) return t;
   for (const k of keep) {
-    if (t < k.s) return k.o;               // dentro de un corte: cae al inicio del siguiente tramo
-    if (t <= k.e) return k.o + (t - k.s);
+    // No desplazar palabras eliminadas al inicio del siguiente tramo: eso
+    // hacía que la transcripción pareciera fuera de sincronía tras un corte.
+    if (t >= k.s && t < k.e) return k.o + (t - k.s);
   }
-  const l = keep[keep.length - 1];
-  return l.o + (l.e - l.s);
+  const last = keep[keep.length - 1];
+  if (t === last.e) return last.o + (last.e - last.s);
+  return -1;
 }
 
 export function outToSrc(keep, T) {

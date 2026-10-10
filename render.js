@@ -85,7 +85,9 @@ async function buildVoice(dir, input, info, q) {
   const script = path.join(dir, 'audio.graph');
   await fs.writeFile(script, graph);
   if (info.hasAudio) args.push('-i', input);
-  args.push('-filter_complex_script', script, '-map', '[a]', '-ar', '48000', '-c:a', 'pcm_f32le', pre);
+  // Pasar el grafo como argumento funciona en FFmpeg 5–9; FFmpeg 9 quitó
+  // -filter_complex_script. Se conserva el archivo para diagnóstico.
+  args.push('-filter_complex', graph, '-map', '[a]', '-ar', '48000', '-c:a', 'pcm_f32le', pre);
   await run('ffmpeg', args);
   const m = await measureLoudnorm(pre);
   const ln = `loudnorm=I=-14:TP=-1:LRA=11:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true`;
@@ -124,7 +126,7 @@ export async function renderVideo({ dir, input, info, plan, music, onProgress })
     '-i', input,
     '-thread_queue_size', '64', '-f', 'rawvideo', '-pixel_format', 'rgba', '-video_size', `${W}x${H}`, '-framerate', String(FPS), '-i', 'pipe:0',
     '-i', voice, ...musicArgs,
-    '-filter_complex_script', script,
+    '-filter_complex', graph,
     '-map', '[vout]', '-map', '[aout]',
     '-c:v', 'libx264', '-preset', process.env.X264_PRESET || 'slow', '-crf', process.env.X264_CRF || '17',
     '-profile:v', 'high', '-level', '4.2', '-pix_fmt', 'yuv420p', '-r', String(FPS), '-g', '60',

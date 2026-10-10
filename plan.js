@@ -74,22 +74,24 @@ export function generateZooms({ phrases, keep, outDuration, seed = 1 }) {
   const rng = mulberry32(seed);
   const starts = phrases.map((p) => srcToOut(keep, p.start));
   const ev = [];
-  let cur = 1, lastEnd = 0;
+  let cur = 1, lastEnd = 0, lastStart = -Infinity;
   const total = outDuration;
-  let t = 1.5 + rng() * 2;
+  let t = 2.5 + rng();
   while (t < total - 1.2) {
-    let s = t, bestD = Infinity;
+    const lower = Number.isFinite(lastStart) ? lastStart + Z.everySecMin : 1.5;
+    const upper = Number.isFinite(lastStart) ? lastStart + Z.everySecMax : Math.max(lower, 4.5);
+    let s = Math.max(lower, Math.min(upper, t)), bestD = Infinity;
     for (const ps of starts) {
       const d = Math.abs(ps - t);
-      if (d < bestD && d <= Z.snapWindowSec) { bestD = d; s = ps; }
+      if (ps >= lower && ps <= upper && d < bestD && d <= Z.snapWindowSec) { bestD = d; s = ps; }
     }
-    s = Math.max(s, lastEnd + 0.2);
+    s = Math.max(s, lastEnd + 0.2, lower);
     if (s > total - 1.0) break;
     const fast = rng() < 0.5;
     const dur = fast ? Z.fastSec : Z.slowSec;
     const to = cur === 1 ? Z.scaleMin + rng() * (Z.scaleMax - Z.scaleMin) : 1;
     ev.push({ t0: s, t1: s + dur, from: cur, to, ease: fast ? 'out' : 'inout' });
-    cur = to; lastEnd = s + dur;
+    cur = to; lastEnd = s + dur; lastStart = s;
     t = s + Z.everySecMin + rng() * (Z.everySecMax - Z.everySecMin);
   }
   if (cur !== 1 && total - lastEnd > 1.2) {
@@ -183,11 +185,19 @@ export function markSuspects(words, gapSec = 0.5) {
 /** Plan a partir de las palabras (las marcadas con `x` se sacan del video, subtítulos y cortes). */
 export function planFromWords({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, manualCuts = [] }) {
   const cfg = CUT_PRESETS[sensitivity] || CUT_PRESETS.normal;
-  const active = words.filter((w) => !w.x);
+  const requested = words.filter((w) => !w.x);
+  const cutOverlap = (w, c) => Math.min(w.end, c.e) - Math.max(w.start, c.s) >= 1 / 60;
+  const manualCutWords = (w) => manualCuts.some((c) => cutOverlap(w, c));
+  const candidates = requested.filter((w) => !manualCutWords(w));
+  let cuts = detectCuts(audio16k, sr, candidates, fillers, duration, cfg);
+  if (manualCuts.length) cuts = mergeCutRanges([...cuts, ...manualCuts.map((m) => ({ s: m.s, e: m.e, on: true }))]);
+  // Un corte manual o automático no debe dejar palabras sin audio dentro del subtítulo.
+  // Ignora solapamientos menores a medio cuadro: la salida se cuantiza a 30 fps
+  // y un roce de pocos milisegundos en un borde no debe borrar una palabra entera.
+  const cutWords = (w) => cuts.some((c) => cutOverlap(w, c));
+  const active = candidates.filter((w) => !cutWords(w));
   const chunks = active.map((w) => ({ text: w.raw, timestamp: [w.start, w.end] }));
   const { phrases } = buildPhrases(chunks);
-  let cuts = detectCuts(audio16k, sr, active, fillers, duration, cfg);
-  if (manualCuts.length) cuts = mergeCutRanges([...cuts, ...manualCuts.map((m) => ({ s: m.s, e: m.e, on: true }))]);
   return replan({ phrases, words, fillers, cuts, duration, seed });
 }
 

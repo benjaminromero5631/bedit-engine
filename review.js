@@ -30,6 +30,7 @@ video{width:100%;max-height:70vh;background:#000;border-radius:12px}
 .w.usr{color:var(--usr);text-decoration:line-through}
 .w.sus{box-shadow:inset 0 -2px 0 var(--sus)}
 .w.fil{color:var(--mut);text-decoration:line-through;cursor:default;font-size:14px}
+.w.cut{color:#717782;text-decoration:line-through;opacity:.72}
 .legend{color:var(--mut);font-size:13px;margin:10px 0}
 .bar{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center}
 .msg{color:var(--mut);font-size:14px}
@@ -46,11 +47,13 @@ button.dng{color:var(--usr)}
 .tl-wrap{position:relative;height:90px;background:#101216;border-radius:8px;cursor:crosshair}
 .tl-wave{position:absolute;inset:0;display:flex;align-items:flex-end;gap:1px;padding:0 1px;pointer-events:none}
 .tl-wave b{flex:1;background:#3a4049;min-width:1px;border-radius:1px}
+.tl-auto-cut{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,rgba(250,204,21,.12),rgba(250,204,21,.12) 4px,rgba(250,204,21,.28) 4px,rgba(250,204,21,.28) 7px);border-left:1px solid rgba(250,204,21,.6);border-right:1px solid rgba(250,204,21,.6);pointer-events:none;z-index:1}
 .tl-cut{position:absolute;top:0;bottom:0;background:rgba(244,63,94,.35);border:1px solid var(--usr);cursor:pointer;z-index:2}
 .tl-cut .h{position:absolute;top:0;bottom:0;width:10px;cursor:ew-resize;z-index:3}
 .tl-cut .h.l{left:-5px}.tl-cut .h.r{right:-5px}
 .tl-sel{position:absolute;top:0;bottom:0;background:rgba(110,231,168,.25);border:1px dashed var(--ac);pointer-events:none;z-index:1}
 .tl-play{position:absolute;top:0;bottom:0;width:2px;background:#fff;pointer-events:none;z-index:4}
+.tl-warning{color:#facc15;font-size:13px;margin-top:8px}
 .tl-list{margin-top:10px;display:grid;gap:6px}
 .tl-row{display:flex;align-items:center;gap:6px;background:#1c1f25;border-radius:8px;padding:6px 8px;font-size:13px;flex-wrap:wrap}
 .tl-row button{padding:3px 8px;font-size:13px}
@@ -72,7 +75,7 @@ var TOKEN = '';
 try { TOKEN = localStorage.getItem('bedit_token') || ''; } catch (e) {}
 var app = document.getElementById('app');
 var cur = null, removed = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [];
-var tlPxPerSec = 0, tlDur = 0;
+var tlPxPerSec = 0, tlDur = 0, tlKeep = [];
 
 function api(path, opts) {
   opts = opts || {};
@@ -142,7 +145,7 @@ function render(d) {
     h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button><button id="m3">Mover tiempo</button></div>';
     h += '<div class="words" id="words"></div>';
     h += '<div class="legend"><span style="color:var(--rep)">naranja</span> = repetición quitada sola · <span style="color:var(--usr)">rojo</span> = la quitaste tú · <span style="box-shadow:inset 0 -2px 0 var(--sus)">subrayado</span> = sospechoso · gris = muletilla · <span style="border-bottom:2px dashed var(--ac)">subrayado punteado</span> = editada/movida. "Quitar palabras": toca para quitar/recuperar. "Editar texto": toca para corregir. "Mover tiempo": toca y escribe cuántos cuadros (1/30s) desplazar esa palabra/subtítulo.</div>';
-    h += '<div class="tl"><div class="legend" style="margin-top:0">Línea de tiempo: arrastra sobre el audio para cortar un tramo libre, a tu gusto (si quedas muy cerca de una palabra, se pega solo). Arrastra los bordes rojos para ajustarlos, o usa los botones de cuadro a cuadro.</div><div class="tl-scroll"><div id="tlwrap" class="tl-wrap"></div></div><div id="tllist" class="tl-list"></div></div>';
+  h += '<div class="tl"><div class="legend" style="margin-top:0">Línea de tiempo del video original: amarillo rayado = tramo que se quitará automáticamente; rojo = corte manual. El cursor sigue el video aunque haya cortes. Arrastra sobre el audio para añadir un corte manual; si toca palabras, aparecerá un aviso antes de aplicar.</div><div class="tl-scroll"><div id="tlwrap" class="tl-wrap"></div></div><div id="tllist" class="tl-list"></div><div id="tlwarning" class="tl-warning"></div></div>';
   } else {
     h += '<p class="msg">Este video es de una versión anterior: se puede ver y aprobar, pero no editar palabras.</p>';
   }
@@ -170,10 +173,13 @@ function render(d) {
   var v = document.getElementById('v');
   v.ontimeupdate = function () {
     var t = v.currentTime, best = null;
-    for (var k = 0; k < words.length; k++) { if (words[k].o >= 0 && words[k].o <= t) best = k; else if (words[k].o > t) break; }
+    for (var k = 0; k < words.length; k++) {
+      if (words[k].o >= 0 && words[k].o <= t && t < words[k].oe) { best = k; break; }
+    }
     Array.prototype.forEach.call(document.querySelectorAll('.w.cur'), function (e) { e.classList.remove('cur'); });
     if (best !== null) { var el = document.getElementById('w' + best); if (el) el.classList.add('cur'); }
-    var pl = document.getElementById('tlplay'); if (pl && tlPxPerSec) pl.style.left = (v.currentTime * tlPxPerSec) + 'px';
+    var pl = document.getElementById('tlplay');
+    if (pl && tlPxPerSec) pl.style.left = (sourceAtOutput(v.currentTime) * tlPxPerSec) + 'px';
   };
   var ap = document.getElementById('approve'), dl = document.getElementById('del'), rs = document.getElementById('restore');
   if (ap) ap.onclick = function () { if (dirty && !confirm('Tienes cambios sin aplicar. ¿Aprobar igual el video actual?')) return; setState('aprobado'); };
@@ -198,11 +204,21 @@ function refreshInfo() {
   var apBtn = document.getElementById('apply'); if (apBtn) apBtn.disabled = false;
   var info = document.getElementById('info');
   if (info) info.textContent = Object.keys(removed).length + ' quitadas · ' + Object.keys(edits).length + ' corregidas · ' + Object.keys(times).length + ' movidas · ' + manualCuts.length + ' cortes manuales';
+  var warning = document.getElementById('tlwarning');
+  if (warning) {
+    var hit = {};
+    manualCuts.forEach(function (c) { words.forEach(function (w) {
+      if (!w.f && w.i >= 0 && !removed[w.i] && Math.min(w.end, c.e) - Math.max(w.start, c.s) >= 1 / 60) hit[w.i] = true;
+    }); });
+    var count = Object.keys(hit).length;
+    warning.textContent = count ? '⚠ Estos cortes también quitarán ' + count + ' palabra' + (count === 1 ? '' : 's') + ' hablada' + (count === 1 ? '' : 's') + '. Revisa el video antes de aplicar.' : '';
+  }
   dirty = true;
 }
 
 function wcls(w) {
   var c = 'w';
+  if (w.o < 0 && !w.x) c += ' cut';
   if (removed[w.i]) c += w.x === 'rep' ? ' rep' : ' usr';
   if (w.s) c += ' sus';
   if (w.e || edits[w.i] !== undefined || times[w.i] !== undefined) c += ' edt';
@@ -239,6 +255,7 @@ function drawWords() {
 
 function initTimeline(d) {
   manualCuts = (d.manualCuts || []).map(function (m) { return { s: m.s, e: m.e }; });
+  tlKeep = d.keep || [];
   tlDur = d.duration || 1;
   var wrap = document.getElementById('tlwrap');
   if (!wrap) return;
@@ -264,7 +281,13 @@ function initTimeline(d) {
     return { s: Math.round(s * 1000) / 1000, e: Math.round(en * 1000) / 1000 };
   }
   function drawCuts() {
+    Array.prototype.forEach.call(wrap.querySelectorAll('.tl-auto-cut'), function (e) { e.remove(); });
     Array.prototype.forEach.call(wrap.querySelectorAll('.tl-cut'), function (e) { e.remove(); });
+    (d.cuts || []).forEach(function (c) {
+      var el = document.createElement('div'); el.className = 'tl-auto-cut';
+      el.style.left = (c.s * tlPxPerSec) + 'px'; el.style.width = Math.max(1, (c.e - c.s) * tlPxPerSec) + 'px';
+      el.title = 'Tramo que se quitará automáticamente'; wrap.appendChild(el);
+    });
     manualCuts.forEach(function (c, idx) {
       var el = document.createElement('div'); el.className = 'tl-cut';
       el.style.left = (c.s * tlPxPerSec) + 'px'; el.style.width = Math.max(3, (c.e - c.s) * tlPxPerSec) + 'px';
@@ -284,9 +307,9 @@ function initTimeline(d) {
   }
   function dragEdge(ev, idx, side) {
     ev.stopPropagation(); ev.preventDefault();
-    var rect = wrap.getBoundingClientRect();
+    var scroller = wrap.parentElement, rect = scroller.getBoundingClientRect();
     function move(e2) {
-      var t = (e2.clientX - rect.left + wrap.parentElement.scrollLeft) / tlPxPerSec;
+      var t = (e2.clientX - rect.left + scroller.scrollLeft) / tlPxPerSec;
       var c = manualCuts[idx];
       if (side === 's') c.s = Math.max(0, Math.min(c.e - 1 / 30, t)); else c.e = Math.min(tlDur, Math.max(c.s + 1 / 30, t));
       drawCuts();
@@ -336,18 +359,22 @@ function initTimeline(d) {
 
   wrap.onmousedown = function (ev) {
     if (ev.target.closest('.tl-cut')) return;
-    var rect = wrap.getBoundingClientRect();
-    var x0 = ev.clientX - rect.left;
+    var scroller = wrap.parentElement, rect = scroller.getBoundingClientRect();
+    var x0 = ev.clientX - rect.left + scroller.scrollLeft;
     var sel = document.createElement('div'); sel.className = 'tl-sel'; wrap.appendChild(sel);
     function upd(x1) { var a = Math.min(x0, x1), b = Math.max(x0, x1); sel.style.left = a + 'px'; sel.style.width = (b - a) + 'px'; }
-    function move(e2) { upd(e2.clientX - rect.left); }
+    function move(e2) { upd(e2.clientX - rect.left + scroller.scrollLeft); }
     function up(e2) {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
-      var x1 = e2.clientX - rect.left;
+      var x1 = e2.clientX - rect.left + scroller.scrollLeft;
       var a = Math.min(x0, x1) / tlPxPerSec, b = Math.max(x0, x1) / tlPxPerSec;
       sel.remove();
-      if (b - a < 0.05) return;
+      if (b - a < 0.05) {
+        var player = document.getElementById('v');
+        if (player) player.currentTime = outputAtSource(x1 / tlPxPerSec);
+        return;
+      }
       manualCuts.push(snapRange(a, b));
       drawCuts(); refreshInfo();
     }
@@ -355,6 +382,27 @@ function initTimeline(d) {
     document.addEventListener('mouseup', up);
   };
   drawCuts();
+}
+
+function sourceAtOutput(t) {
+  if (!tlKeep.length) return t;
+  for (var i = 0; i < tlKeep.length; i++) {
+    var k = tlKeep[i], len = k.e - k.s;
+    if (t < k.o + len) return k.s + Math.max(0, t - k.o);
+  }
+  var last = tlKeep[tlKeep.length - 1];
+  return last.e;
+}
+
+function outputAtSource(t) {
+  if (!tlKeep.length) return t;
+  for (var i = 0; i < tlKeep.length; i++) {
+    var k = tlKeep[i];
+    if (t < k.s) return k.o;
+    if (t < k.e) return k.o + (t - k.s);
+  }
+  var last = tlKeep[tlKeep.length - 1];
+  return last.o + (last.e - last.s);
 }
 
 function wireMusic(d) {
@@ -416,6 +464,12 @@ function pickMusic(d, name) {
 }
 
 function apply() {
+  var hit = {};
+  manualCuts.forEach(function (c) { words.forEach(function (w) {
+    if (!w.f && w.i >= 0 && !removed[w.i] && Math.min(w.end, c.e) - Math.max(w.start, c.s) >= 1 / 60) hit[w.i] = true;
+  }); });
+  var hitCount = Object.keys(hit).length;
+  if (hitCount && !confirm('Los cortes seleccionados eliminarán ' + hitCount + ' palabra' + (hitCount === 1 ? '' : 's') + ' hablada' + (hitCount === 1 ? '' : 's') + '. ¿Aplicar de todos modos?')) return;
   var btn = document.getElementById('apply'); btn.disabled = true;
   document.getElementById('info').textContent = 'Enviando…';
   api('/jobs/' + cur + '/edit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ removed: Object.keys(removed).map(Number), edits: edits, times: times, manualCuts: manualCuts }) })

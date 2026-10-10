@@ -1,0 +1,48 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { keepFromCuts, srcToOut, outToSrc } from './cuts.js';
+import { generateZooms, planFromWords } from './plan.js';
+
+test('time mapping skips removed source intervals without shifting them onto later footage', () => {
+  const { keep } = keepFromCuts([{ s: 1, e: 2, on: true }], 4);
+  assert.equal(srcToOut(keep, 0.5), 0.5);
+  assert.equal(srcToOut(keep, 1.5), -1);
+  assert.equal(srcToOut(keep, 2), 1);
+  assert.equal(srcToOut(keep, 3), 2);
+  assert.equal(outToSrc(keep, 1), 2);
+  assert.equal(outToSrc(keep, 2), 3);
+});
+
+test('a manual cut removes intersecting speech from captions; removing it restores the caption', () => {
+  const audio16k = new Float32Array(3 * 16000).fill(0.1);
+  const words = [
+    { raw: 'hola', text: 'hola', start: 0.5, end: 0.8 },
+    { raw: 'mundo', text: 'mundo', start: 1.5, end: 1.8 },
+  ];
+  const args = { audio16k, words, fillers: [], duration: 3, seed: 4 };
+  const cut = planFromWords({ ...args, manualCuts: [{ s: 0.4, e: 0.9 }] });
+  assert.deepEqual(cut.phrases.filter((p) => p.kind === 'base').map((p) => p.text), ['mundo']);
+  const restored = planFromWords(args);
+  assert.deepEqual(restored.phrases.filter((p) => p.kind === 'base').map((p) => p.text), ['hola', 'mundo']);
+});
+
+test('a sub-frame edge overlap does not suppress the full spoken word', () => {
+  const audio16k = new Float32Array(2 * 16000).fill(0.1);
+  const words = [{ raw: 'hola', text: 'hola', start: 0.5, end: 0.8 }];
+  const plan = planFromWords({ audio16k, words, fillers: [], duration: 2,
+    manualCuts: [{ s: 0.49, e: 0.51 }] });
+  assert.deepEqual(plan.phrases.filter((p) => p.kind === 'base').map((p) => p.text), ['hola']);
+});
+
+test('automatic zoom transitions stay sparse and alternate in and out', () => {
+  const phrases = Array.from({ length: 100 }, (_, i) => ({ start: i * 0.6, end: i * 0.6 + 0.4 }));
+  const events = generateZooms({ phrases, keep: [{ s: 0, e: 60, o: 0 }], outDuration: 60, seed: 123 });
+  assert.ok(events.length >= 6);
+  for (let i = 0; i < events.length - 1; i++) {
+    assert.notEqual(events[i].to, events[i + 1].to, 'cada transición debe alternar zoom y zoom out');
+    const gap = events[i + 1].t0 - events[i].t0;
+    // El último evento puede ser el zoom-out de cierre, añadido al terminar el reel.
+    if (gap < 3) assert.equal(i + 1, events.length - 1);
+    else assert.ok(gap <= 5, `separación inesperada de ${gap.toFixed(2)} s`);
+  }
+});

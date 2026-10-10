@@ -34,6 +34,12 @@ video{width:100%;max-height:70vh;background:#000;border-radius:12px}
 .legend{color:var(--mut);font-size:13px;margin:10px 0}
 .bar{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center}
 .msg{color:var(--mut);font-size:14px}
+.auth{max-width:440px;margin:10vh auto 0;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
+.auth h2{font-size:18px;margin:0 0 6px}
+.auth p{color:var(--mut);margin:0 0 14px}
+.auth form{display:flex;gap:8px;flex-wrap:wrap}
+.auth input{flex:1;min-width:200px;background:#0e0f12;color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit}
+.auth .err{color:#fda4af;margin:0 0 12px}
 .top{display:flex;gap:10px;align-items:center;margin-bottom:10px}
 a{color:var(--ac)}
 .tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
@@ -84,20 +90,38 @@ function api(path, opts) {
     return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; });
   });
 }
-function askToken() {
-  var t = prompt('Pega tu token de B Edit');
-  if (t) { TOKEN = t.trim(); try { localStorage.setItem('bedit_token', TOKEN); } catch (e) {} }
-  return !!TOKEN;
+function showTokenForm(message) {
+  app.innerHTML = '<section class="auth"><h2>Conecta con B Edit</h2><p>Ingresa el token para cargar tus videos y borradores.</p>' +
+    (message ? '<p class="err">' + esc(message) + '</p>' : '') +
+    '<form id="tokenForm"><input id="tokenInput" type="password" autocomplete="off" placeholder="Token de B Edit" required><button class="pri" type="submit">Continuar</button></form></section>';
+  var form = document.getElementById('tokenForm');
+  form.onsubmit = function (e) {
+    e.preventDefault();
+    var field = document.getElementById('tokenInput');
+    var value = field.value.trim();
+    if (!value) return;
+    TOKEN = value;
+    try { localStorage.setItem('bedit_token', TOKEN); } catch (e) {}
+    showList();
+  };
+  document.getElementById('tokenInput').focus();
 }
 function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
 
 function stateOf(j) { return j.deleted ? 'eliminado' : (j.approved ? 'aprobado' : 'pendiente'); }
 function showList() {
   clearInterval(poll); cur = null;
-  if (!TOKEN && !askToken()) { app.innerHTML = '<p class="msg">Falta el token.</p>'; return; }
+  if (!TOKEN) { showTokenForm(''); return; }
   app.innerHTML = '<p class="msg">Cargando…</p>';
   api('/jobs').then(function (d) { lastJobs = d.jobs; drawList(); })
-    .catch(function (e) { app.innerHTML = '<p class="msg">Error: ' + esc(e.message) + ' — revisa el token.</p>'; });
+    .catch(function (e) {
+      if (e.message === 'No autorizado' || e.message === '401') {
+        TOKEN = '';
+        try { localStorage.removeItem('bedit_token'); } catch (storageError) {}
+        showTokenForm('El token no fue aceptado. Revísalo e inténtalo de nuevo.');
+      } else app.innerHTML = '<p class="msg">No se pudieron cargar los videos: ' + esc(e.message) + ' <button id="retry">Reintentar</button></p>';
+      var retry = document.getElementById('retry'); if (retry) retry.onclick = showList;
+    });
 }
 function drawList() {
   var counts = { pendiente: 0, aprobado: 0, eliminado: 0 };
@@ -478,6 +502,6 @@ function apply() {
     .catch(function (e) { document.getElementById('info').textContent = 'Error: ' + e.message; btn.disabled = false; });
 }
 document.getElementById('refresh').onclick = function () { cur ? openJob(cur) : showList(); };
-document.getElementById('tok').onclick = function () { askToken(); showList(); };
+document.getElementById('tok').onclick = function () { showTokenForm(''); };
 showList();
 </script></body></html>`;

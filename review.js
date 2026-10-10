@@ -37,9 +37,23 @@ a{color:var(--ac)}
 .tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 .tabs button.on{background:var(--ac);color:#06210f;border-color:var(--ac);font-weight:600}
 .w.edt{border-bottom:2px dashed var(--ac)}
-.mode{display:flex;gap:8px;margin-bottom:10px}
+.mode{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
 .mode button.on{border-color:var(--ac);color:var(--ac)}
 button.dng{color:var(--usr)}
+.tl{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+.tl-scroll{overflow-x:auto;overflow-y:hidden;border-radius:8px}
+.tl-wrap{position:relative;height:90px;background:#101216;border-radius:8px;cursor:crosshair}
+.tl-wave{position:absolute;inset:0;display:flex;align-items:flex-end;gap:1px;padding:0 1px;pointer-events:none}
+.tl-wave b{flex:1;background:#3a4049;min-width:1px;border-radius:1px}
+.tl-cut{position:absolute;top:0;bottom:0;background:rgba(244,63,94,.35);border:1px solid var(--usr);cursor:pointer;z-index:2}
+.tl-cut .h{position:absolute;top:0;bottom:0;width:10px;cursor:ew-resize;z-index:3}
+.tl-cut .h.l{left:-5px}.tl-cut .h.r{right:-5px}
+.tl-sel{position:absolute;top:0;bottom:0;background:rgba(110,231,168,.25);border:1px dashed var(--ac);pointer-events:none;z-index:1}
+.tl-play{position:absolute;top:0;bottom:0;width:2px;background:#fff;pointer-events:none;z-index:4}
+.tl-list{margin-top:10px;display:grid;gap:6px}
+.tl-row{display:flex;align-items:center;gap:6px;background:#1c1f25;border-radius:8px;padding:6px 8px;font-size:13px;flex-wrap:wrap}
+.tl-row button{padding:3px 8px;font-size:13px}
+.tl-row span.t{color:var(--mut)}
 </style></head><body>
 <header><h1>B Edit · Revisión</h1><button id="refresh">Actualizar</button><button id="tok">Token</button></header>
 <main id="app"></main>
@@ -47,7 +61,8 @@ button.dng{color:var(--usr)}
 var TOKEN = '';
 try { TOKEN = localStorage.getItem('bedit_token') || ''; } catch (e) {}
 var app = document.getElementById('app');
-var cur = null, removed = {}, edits = {}, words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [];
+var cur = null, removed = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [];
+var tlPxPerSec = 0, tlDur = 0;
 
 function api(path, opts) {
   opts = opts || {};
@@ -94,7 +109,7 @@ function drawList() {
 }
 
 function openJob(id) {
-  cur = id; removed = {}; edits = {}; dirty = false; mode = 'quitar'; clearInterval(poll);
+  cur = id; removed = {}; edits = {}; times = {}; manualCuts = []; dirty = false; mode = 'quitar'; clearInterval(poll);
   app.innerHTML = '<p class="msg">Cargando…</p>';
   api('/jobs/' + id + '/review').then(function (d) { render(d); }).catch(function (e) { app.innerHTML = '<p class="msg">Error: ' + esc(e.message) + '</p><button onclick="showList()">Volver</button>'; });
 }
@@ -114,9 +129,10 @@ function render(d) {
   var st = d.deleted ? 'eliminado' : (d.approved ? 'aprobado' : 'pendiente');
   h += '<div class="detail"><div><video id="v" controls playsinline src="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '&v=' + Date.now() + '"></video></div><div>';
   if (d.editable) {
-    h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button></div>';
+    h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button><button id="m3">Mover tiempo</button></div>';
     h += '<div class="words" id="words"></div>';
-    h += '<div class="legend"><span style="color:var(--rep)">naranja</span> = repetición quitada sola · <span style="color:var(--usr)">rojo</span> = la quitaste tú · <span style="box-shadow:inset 0 -2px 0 var(--sus)">subrayado</span> = sospechoso · gris = muletilla. En "Quitar palabras" toca una palabra para quitarla o recuperarla. En "Editar texto" toca una palabra para corregirla.</div>';
+    h += '<div class="legend"><span style="color:var(--rep)">naranja</span> = repetición quitada sola · <span style="color:var(--usr)">rojo</span> = la quitaste tú · <span style="box-shadow:inset 0 -2px 0 var(--sus)">subrayado</span> = sospechoso · gris = muletilla · <span style="border-bottom:2px dashed var(--ac)">subrayado punteado</span> = editada/movida. "Quitar palabras": toca para quitar/recuperar. "Editar texto": toca para corregir. "Mover tiempo": toca y escribe cuántos cuadros (1/30s) desplazar esa palabra/subtítulo.</div>';
+    h += '<div class="tl"><div class="legend" style="margin-top:0">Línea de tiempo: arrastra sobre el audio para cortar un tramo libre (se ajusta solo al borde de palabra más cercano). Arrastra los bordes rojos para ajustarlos, o usa los botones de cuadro a cuadro.</div><div class="tl-scroll"><div id="tlwrap" class="tl-wrap"></div></div><div id="tllist" class="tl-list"></div></div>';
   } else {
     h += '<p class="msg">Este video es de una versión anterior: se puede ver y aprobar, pero no editar palabras.</p>';
   }
@@ -131,7 +147,10 @@ function render(d) {
     drawWords(true); setMode(mode);
     document.getElementById('m1').onclick = function () { setMode('quitar'); };
     document.getElementById('m2').onclick = function () { setMode('editar'); };
+    document.getElementById('m3').onclick = function () { setMode('mover'); };
     document.getElementById('apply').onclick = apply;
+    initTimeline(d);
+    refreshInfo();
   }
   var v = document.getElementById('v');
   v.ontimeupdate = function () {
@@ -139,6 +158,7 @@ function render(d) {
     for (var k = 0; k < words.length; k++) { if (words[k].o >= 0 && words[k].o <= t) best = k; else if (words[k].o > t) break; }
     Array.prototype.forEach.call(document.querySelectorAll('.w.cur'), function (e) { e.classList.remove('cur'); });
     if (best !== null) { var el = document.getElementById('w' + best); if (el) el.classList.add('cur'); }
+    var pl = document.getElementById('tlplay'); if (pl && tlPxPerSec) pl.style.left = (v.currentTime * tlPxPerSec) + 'px';
   };
   var ap = document.getElementById('approve'), dl = document.getElementById('del'), rs = document.getElementById('restore');
   if (ap) ap.onclick = function () { if (dirty && !confirm('Tienes cambios sin aplicar. ¿Aprobar igual el video actual?')) return; setState('aprobado'); };
@@ -150,6 +170,7 @@ function setMode(m) {
   mode = m;
   document.getElementById('m1').className = m === 'quitar' ? 'on' : '';
   document.getElementById('m2').className = m === 'editar' ? 'on' : '';
+  document.getElementById('m3').className = m === 'mover' ? 'on' : '';
 }
 
 function setState(s) {
@@ -158,11 +179,18 @@ function setState(s) {
     .catch(function (e) { document.getElementById('info').textContent = 'Error: ' + e.message; });
 }
 
+function refreshInfo() {
+  var apBtn = document.getElementById('apply'); if (apBtn) apBtn.disabled = false;
+  var info = document.getElementById('info');
+  if (info) info.textContent = Object.keys(removed).length + ' quitadas · ' + Object.keys(edits).length + ' corregidas · ' + Object.keys(times).length + ' movidas · ' + manualCuts.length + ' cortes manuales';
+  dirty = true;
+}
+
 function wcls(w) {
   var c = 'w';
   if (removed[w.i]) c += w.x === 'rep' ? ' rep' : ' usr';
   if (w.s) c += ' sus';
-  if (w.e || edits[w.i] !== undefined) c += ' edt';
+  if (w.e || edits[w.i] !== undefined || times[w.i] !== undefined) c += ' edt';
   return c;
 }
 function drawWords() {
@@ -179,21 +207,141 @@ function drawWords() {
         var t = prompt('Corregir texto de esta palabra', edits[w.i] !== undefined ? edits[w.i] : w.t);
         if (t === null || !t.trim()) return;
         edits[w.i] = t.trim(); el.textContent = edits[w.i];
+      } else if (mode === 'mover') {
+        var base = times[w.i] ? Math.round((times[w.i].start - w.start) * 30) : 0;
+        var inp = prompt('Mover esta palabra/subtítulo: cuadros a desplazar (1 cuadro = 1/30s). Positivo = más tarde, negativo = más temprano. 0 = deshacer.', base);
+        if (inp === null) return;
+        var n = parseInt(inp, 10); if (!isFinite(n)) return;
+        if (n === 0) delete times[w.i]; else times[w.i] = { start: w.start + n / 30, end: w.end + n / 30 };
       } else {
         if (removed[w.i]) delete removed[w.i]; else removed[w.i] = true;
       }
-      dirty = true;
       el.className = wcls(w);
-      document.getElementById('apply').disabled = false;
-      document.getElementById('info').textContent = Object.keys(removed).length + ' quitadas · ' + Object.keys(edits).length + ' corregidas';
+      refreshInfo();
     };
   });
+}
+
+function initTimeline(d) {
+  manualCuts = (d.manualCuts || []).map(function (m) { return { s: m.s, e: m.e }; });
+  tlDur = d.duration || 1;
+  var wrap = document.getElementById('tlwrap');
+  if (!wrap) return;
+  tlPxPerSec = Math.max(30, Math.min(160, 900 / tlDur));
+  var W = Math.max(300, tlDur * tlPxPerSec);
+  wrap.style.width = W + 'px';
+  wrap.innerHTML = '<div class="tl-wave" id="tlwave"></div><div class="tl-play" id="tlplay" style="left:0"></div>';
+
+  function edgesOf() {
+    var e = [0, tlDur];
+    words.forEach(function (w) { if (w.i >= 0) { e.push(w.start); e.push(w.end); } });
+    return e.sort(function (a, b) { return a - b; });
+  }
+  function snapRange(a, b) {
+    var e = edgesOf();
+    function nearest(t) { var best = t, bd = Infinity; e.forEach(function (x) { var dd = Math.abs(x - t); if (dd < bd) { bd = dd; best = x; } }); return best; }
+    var s = nearest(a), en = nearest(b);
+    if (en <= s) en = Math.min(tlDur, s + 1 / 30);
+    return { s: Math.round(s * 1000) / 1000, e: Math.round(en * 1000) / 1000 };
+  }
+  function drawCuts() {
+    Array.prototype.forEach.call(wrap.querySelectorAll('.tl-cut'), function (e) { e.remove(); });
+    manualCuts.forEach(function (c, idx) {
+      var el = document.createElement('div'); el.className = 'tl-cut';
+      el.style.left = (c.s * tlPxPerSec) + 'px'; el.style.width = Math.max(3, (c.e - c.s) * tlPxPerSec) + 'px';
+      el.title = 'Corte manual';
+      var hl = document.createElement('div'); hl.className = 'h l';
+      var hr = document.createElement('div'); hr.className = 'h r';
+      el.appendChild(hl); el.appendChild(hr);
+      hl.onmousedown = function (ev) { dragEdge(ev, idx, 's'); };
+      hr.onmousedown = function (ev) { dragEdge(ev, idx, 'e'); };
+      el.onclick = function (ev) {
+        if (ev.target === hl || ev.target === hr) return;
+        if (confirm('¿Quitar este corte manual?')) { manualCuts.splice(idx, 1); drawCuts(); refreshInfo(); }
+      };
+      wrap.appendChild(el);
+    });
+    drawList();
+  }
+  function dragEdge(ev, idx, side) {
+    ev.stopPropagation(); ev.preventDefault();
+    var rect = wrap.getBoundingClientRect();
+    function move(e2) {
+      var t = (e2.clientX - rect.left + wrap.parentElement.scrollLeft) / tlPxPerSec;
+      var c = manualCuts[idx];
+      if (side === 's') c.s = Math.max(0, Math.min(c.e - 1 / 30, t)); else c.e = Math.min(tlDur, Math.max(c.s + 1 / 30, t));
+      drawCuts();
+    }
+    function up() {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      manualCuts[idx] = snapRange(manualCuts[idx].s, manualCuts[idx].e);
+      drawCuts(); refreshInfo();
+    }
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }
+  function drawList() {
+    var box = document.getElementById('tllist'); if (!box) return;
+    if (!manualCuts.length) { box.innerHTML = '<span class="msg">Sin cortes manuales todavía.</span>'; return; }
+    var hh = '';
+    manualCuts.forEach(function (c, idx) {
+      hh += '<div class="tl-row"><span>' + c.s.toFixed(2) + 's → ' + c.e.toFixed(2) + 's <span class="t">(' + (c.e - c.s).toFixed(2) + 's)</span></span>' +
+        '<span class="t">inicio</span><button data-nudge="' + idx + ',s,-1">«</button><button data-nudge="' + idx + ',s,1">»</button>' +
+        '<span class="t">fin</span><button data-nudge="' + idx + ',e,-1">«</button><button data-nudge="' + idx + ',e,1">»</button>' +
+        '<button class="dng" data-rm="' + idx + '">Quitar</button></div>';
+    });
+    box.innerHTML = hh;
+    Array.prototype.forEach.call(box.querySelectorAll('[data-nudge]'), function (btn) {
+      btn.onclick = function () {
+        var parts = btn.getAttribute('data-nudge').split(',');
+        var idx = +parts[0], side = parts[1], dir = +parts[2];
+        var c = manualCuts[idx], step = dir / 30;
+        if (side === 's') c.s = Math.max(0, Math.min(c.e - 1 / 30, c.s + step));
+        else c.e = Math.min(tlDur, Math.max(c.s + 1 / 30, c.e + step));
+        drawCuts(); refreshInfo();
+      };
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('[data-rm]'), function (btn) {
+      btn.onclick = function () { manualCuts.splice(+btn.getAttribute('data-rm'), 1); drawCuts(); refreshInfo(); };
+    });
+  }
+
+  api('/jobs/' + cur + '/envelope').then(function (env) {
+    var box = document.getElementById('tlwave');
+    if (!box) return;
+    var hh = '';
+    (env.values || []).forEach(function (v) { hh += '<b style="height:' + Math.max(3, Math.round(v * 86)) + 'px"></b>'; });
+    box.innerHTML = hh;
+  }).catch(function () {});
+
+  wrap.onmousedown = function (ev) {
+    if (ev.target.closest('.tl-cut')) return;
+    var rect = wrap.getBoundingClientRect();
+    var x0 = ev.clientX - rect.left;
+    var sel = document.createElement('div'); sel.className = 'tl-sel'; wrap.appendChild(sel);
+    function upd(x1) { var a = Math.min(x0, x1), b = Math.max(x0, x1); sel.style.left = a + 'px'; sel.style.width = (b - a) + 'px'; }
+    function move(e2) { upd(e2.clientX - rect.left); }
+    function up(e2) {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      var x1 = e2.clientX - rect.left;
+      var a = Math.min(x0, x1) / tlPxPerSec, b = Math.max(x0, x1) / tlPxPerSec;
+      sel.remove();
+      if (b - a < 0.05) return;
+      manualCuts.push(snapRange(a, b));
+      drawCuts(); refreshInfo();
+    }
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  };
+  drawCuts();
 }
 
 function apply() {
   var btn = document.getElementById('apply'); btn.disabled = true;
   document.getElementById('info').textContent = 'Enviando…';
-  api('/jobs/' + cur + '/edit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ removed: Object.keys(removed).map(Number), edits: edits }) })
+  api('/jobs/' + cur + '/edit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ removed: Object.keys(removed).map(Number), edits: edits, times: times, manualCuts: manualCuts }) })
     .then(function () { openJob(cur); })
     .catch(function (e) { document.getElementById('info').textContent = 'Error: ' + e.message; btn.disabled = false; });
 }

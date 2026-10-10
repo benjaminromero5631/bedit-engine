@@ -17,6 +17,13 @@ jobs:
           cache: npm
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Whisper runtime dependencies
+        run: python -m pip install faster-whisper 'av<19'
+      - name: Check Whisper decoder compatibility
+        run: python scripts/transcriber-smoke.py
       - name: Install Node dependencies
         run: npm ci --no-audit --no-fund
       - name: Unit tests

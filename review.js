@@ -20,6 +20,7 @@ main{max-width:1000px;margin:0 auto;padding:16px}
 .tag.ok{color:var(--ac);border-color:var(--ac)}
 .detail{display:grid;grid-template-columns:minmax(0,300px) 1fr;gap:18px;margin-top:6px}
 @media(max-width:760px){.detail{grid-template-columns:1fr}}
+.detail>div{min-width:0}
 video{width:100%;max-height:70vh;background:#000;border-radius:12px}
 .words{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;line-height:2.1;min-height:120px}
 .w{padding:2px 5px;border-radius:6px;cursor:pointer;user-select:none}

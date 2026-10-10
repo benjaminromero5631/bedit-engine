@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { detectCuts, keepFromCuts, srcToOut, outToSrc } from './cuts.js';
 import { buildPhrases, generateZooms, markSuspects, planFromWords } from './plan.js';
+import { resolveTranscriberScript } from './transcribe.js';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 test('time mapping skips removed source intervals without shifting them onto later footage', () => {
   const { keep } = keepFromCuts([{ s: 1, e: 2, on: true }], 4);
@@ -72,4 +76,23 @@ test('low Whisper confidence is exposed for review, not auto-deleted', () => {
   assert.equal(words[0].s, true);
   assert.equal(words[0].x, undefined);
   assert.equal(words[1].s, undefined);
+});
+
+test('Whisper script resolves in Docker and local checkout layouts', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bedit-whisper-path-'));
+  try {
+    const src = path.join(root, 'src');
+    const python = path.join(root, 'python');
+    await fs.mkdir(src); await fs.mkdir(python);
+    const dockerScript = path.join(python, 'transcribe.py');
+    await fs.writeFile(dockerScript, '# docker layout');
+    assert.equal(await resolveTranscriberScript(src), dockerScript);
+
+    await fs.rm(dockerScript);
+    const localScript = path.join(src, 'transcribe.py');
+    await fs.writeFile(localScript, '# local layout');
+    assert.equal(await resolveTranscriberScript(src), localScript);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });

@@ -1,0 +1,25 @@
+name: B Edit quality checks
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install Node dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Unit tests
+        run: npm test
+      - name: End-to-end smoke
+        run: npm run smoke

@@ -1,0 +1,48 @@
+name: B Edit quality checks
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Whisper runtime dependencies
+        run: python -m pip install faster-whisper 'av<19'
+      - name: Check Whisper decoder compatibility
+        run: python scripts/transcriber-smoke.py
+      - name: Install Node dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Unit tests
+        run: npm test
+      - name: End-to-end smoke
+        run: npm run smoke
+      - name: Build production Docker image
+        run: docker build --tag bedit-engine:ci .
+      - name: Start image and verify health endpoint
+        run: |
+          docker run --detach --name bedit-engine-ci --publish 18080:8080 \
+            --env BEDIT_TOKEN=ci-validation-token-1234567890 bedit-engine:ci
+          trap 'docker rm --force bedit-engine-ci >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if response=$(curl --silent --show-error --fail http://127.0.0.1:18080/health); then
+              test "$response" = '{"ok":true}'
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs bedit-engine-ci
+          exit 1

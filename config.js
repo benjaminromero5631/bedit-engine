@@ -60,8 +60,8 @@ export const PRESET = {
   // Zooms automáticos (hacia el centro). Alterna zoom-in y zoom-out.
   zoom: {
     enabled: true,
-    everySecMin: 2.0,
-    everySecMax: 3.5,
+    everySecMin: 3.0,
+    everySecMax: 5.0,
     scaleMin: 1.10,                // se nota
     scaleMax: 1.17,
     fastSec: 0.18,                 // zoom rápido tipo golpe

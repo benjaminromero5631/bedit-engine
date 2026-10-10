@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Whisper (faster-whisper) en un entorno aislado
-RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir faster-whisper
+RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir faster-whisper 'av<19'
 ENV PYTHON=/opt/venv/bin/python3
 
 WORKDIR /app

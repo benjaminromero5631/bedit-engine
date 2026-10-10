@@ -1,6 +1,6 @@
-import { keepFromCuts, srcToOut, frameDb } from './core/cuts.js';
+import { keepFromCuts, frameDb } from './core/cuts.js';
 import { editJob } from './pipeline.js';
-import { applyMusicOnly } from './render.js';
+import { applyMusicOnly, quantizeKeep } from './render.js';
 import { run } from './media.js';
 import { REVIEW_HTML } from './review.js';
 import http from 'node:http';
@@ -163,10 +163,29 @@ const server = http.createServer(async (req, res) => {
         if (project) {
           out.duration = project.info.duration;
           out.manualCuts = project.manualCuts || [];
-          const { keep } = keepFromCuts(project.cuts || [], project.info.duration);
-          const inKeep = (t) => keep.some((k) => t >= k.s && t < k.e);
+          const { keep: rawKeep } = keepFromCuts(project.cuts || [], project.info.duration);
+          // La revisión debe usar los mismos límites por cuadro que el MP4 final.
+          const { keep } = quantizeKeep(rawKeep, project.info.duration);
+          out.cuts = project.cuts || [];
+          out.keep = keep;
+          out.outputDuration = keep.reduce((sum, k) => sum + k.e - k.s, 0);
+          const mapWord = (w) => {
+            const parts = keep.map((k) => ({ k, s: Math.max(w.start, k.s), e: Math.min(w.end, k.e) }))
+              .filter((x) => x.e - x.s > 0.005);
+            const retained = parts.reduce((sum, x) => sum + x.e - x.s, 0);
+            // Si un corte atraviesa una palabra, no la anclamos a otro instante.
+            if (!parts.length || retained < (w.end - w.start) - 1 / 30) return { o: -1, oe: -1 };
+            return {
+              o: parts[0].k.o + parts[0].s - parts[0].k.s,
+              oe: parts[parts.length - 1].k.o + parts[parts.length - 1].e - parts[parts.length - 1].k.s,
+            };
+          };
           const toks = [];
-          (project.words || []).forEach((w, i) => toks.push({ t: w.text || '?', start: w.start, end: w.end, i, x: w.x || 0, s: w.s ? 1 : 0, e: w.e ? 1 : 0, o: inKeep(w.start) ? Math.round(srcToOut(keep, w.start) * 100) / 100 : -1 }));
+          (project.words || []).forEach((w, i) => {
+            const mapped = mapWord(w);
+            toks.push({ t: w.text || '?', start: w.start, end: w.end, i, x: w.x || 0, s: w.s ? 1 : 0, e: w.e ? 1 : 0, c: w.confidence ?? null,
+              o: Math.round(mapped.o * 100) / 100, oe: Math.round(mapped.oe * 100) / 100 });
+          });
           (project.fillers || []).forEach((f) => toks.push({ t: 'eh', start: f.start, end: f.end, f: 1, i: -1, x: 0, s: 0, o: -1 }));
           toks.sort((a, b) => a.start - b.start);
           out.words = toks;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { keepFromCuts, srcToOut, outToSrc } from './cuts.js';
+import { detectCuts, keepFromCuts, srcToOut, outToSrc } from './cuts.js';
 import { generateZooms, planFromWords } from './plan.js';
 
 test('time mapping skips removed source intervals without shifting them onto later footage', () => {
@@ -44,5 +44,20 @@ test('automatic zoom transitions stay sparse and alternate in and out', () => {
     // El último evento puede ser el zoom-out de cierre, añadido al terminar el reel.
     if (gap < 3) assert.equal(i + 1, events.length - 1);
     else assert.ok(gap <= 5, `separación inesperada de ${gap.toFixed(2)} s`);
+  }
+});
+
+test('speech-aligned cuts remove a loud non-speech blip in a long pause', () => {
+  const sr = 16000, duration = 5, audio = new Float32Array(sr * duration);
+  for (let i = 0; i < audio.length; i++) {
+    const t = i / sr;
+    if ((t >= 0.5 && t < 1.5) || (t >= 3 && t < 4)) audio[i] = 0.1 * Math.sin(2 * Math.PI * 180 * t);
+    else if (t >= 2.05 && t < 2.25) audio[i] = 0.4 * Math.sin(2 * Math.PI * 900 * t);
+  }
+  const words = [{ start: 0.55, end: 1.45 }, { start: 3.05, end: 3.95 }];
+  const cuts = detectCuts(audio, sr, words, [], duration);
+  assert.ok(cuts.some((c) => c.s <= 2.05 && c.e >= 2.25), 'el ruido del silencio debe quedar dentro del corte');
+  for (const w of words) {
+    assert.ok(cuts.every((c) => Math.min(c.e, w.end) - Math.max(c.s, w.start) < 1 / 60), 'no debe cortar palabras reconocidas');
   }
 });

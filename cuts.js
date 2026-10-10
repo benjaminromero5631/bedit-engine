@@ -138,6 +138,19 @@ export function detectCuts(audio, sr, words, fillers, duration, cfg = CUT_CFG) {
   return cuts;
 }
 
+/** Une cortes automáticos + cortes manuales (del usuario) en una sola lista sin solapes. */
+export function mergeCutRanges(cuts) {
+  const iv = cuts.filter((c) => c.on !== false).map((c) => [c.s, c.e]).sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const [a, b] of iv) {
+    if (b <= a) continue;
+    const last = out[out.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out.map(([s, e]) => ({ s, e, on: true }));
+}
+
 /** A partir de los cortes activos, devuelve los tramos que se quedan con su inicio en el video final. */
 export function keepFromCuts(cuts, duration) {
   const active = cuts.filter((c) => c.on).sort((a, b) => a.s - b.s);

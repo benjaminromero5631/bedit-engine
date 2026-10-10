@@ -38,8 +38,8 @@ export async function rerenderJob({ dir, input, project, music, setStatus }) {
   return { ...stats, phrases: plan.phrases.length, cuts: plan.cuts.length, zooms: plan.zoomEvents.length, musicName: music?.name || null };
 }
 
-/** Aplica las palabras que Benjamin quitó/recuperó en la revisión y devuelve el project.json nuevo (sin renderizar). */
-export async function editJob({ dir, project, removed, edits = {} }) {
+/** Aplica lo que Benjamin cambió en la revisión (palabras quitadas/recuperadas, texto, tiempo de palabras, cortes manuales en la línea de tiempo) y devuelve el project.json nuevo (sin renderizar). */
+export async function editJob({ dir, project, removed, edits = {}, times = {}, manualCuts = [] }) {
   const buf = await fs.readFile(path.join(dir, 'audio16k.wav'));
   const at = buf.indexOf('data');
   const pcm = buf.subarray(at + 8);
@@ -48,7 +48,7 @@ export async function editJob({ dir, project, removed, edits = {} }) {
   for (let i = 0; i < n; i++) audio[i] = pcm.readFloatLE(i * 4);
   const plan = editPlan({
     audio16k: audio, words: project.words, fillers: project.fillers || [], duration: project.info.duration,
-    sensitivity: project.options?.sensitivity || 'normal', seed: project.seed || 1, removed: new Set(removed), edits,
+    sensitivity: project.options?.sensitivity || 'normal', seed: project.seed || 1, removed: new Set(removed), edits, times, manualCuts,
   });
-  return { ...project, words: plan.words, phrases: plan.phrases, cuts: plan.cuts, zoomEvents: plan.zoomEvents };
+  return { ...project, words: plan.words, phrases: plan.phrases, cuts: plan.cuts, zoomEvents: plan.zoomEvents, manualCuts: plan.manualCuts };
 }

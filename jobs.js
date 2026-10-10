@@ -48,22 +48,39 @@ export async function enqueue(id, kind = 'process', project = null) {
   return job;
 }
 
-// ── música: rota las pistas en orden ──
+// ── música: pista fija por defecto, con rotación como respaldo si no hay default ──
+async function readState() {
+  try { return JSON.parse(await fs.readFile(STATE, 'utf8')); } catch { return {}; }
+}
+async function writeState(st) { await fs.writeFile(STATE, JSON.stringify(st)); }
+
 export async function listMusic() {
   const names = (await fs.readdir(MUSIC)).filter((n) => /\.(mp3|m4a|wav|aac|ogg|flac)$/i.test(n)).sort();
   return names;
+}
+export async function getDefaultMusic() {
+  const st = await readState();
+  return st.defaultMusic || null;
+}
+export async function setDefaultMusic(name) {
+  const st = await readState();
+  st.defaultMusic = name || null;
+  await writeState(st);
+  return st.defaultMusic;
 }
 async function pickMusic() {
   if (process.env.MUSIC === 'off') return null;
   const names = await listMusic();
   if (!names.length) return null;
-  let st = {};
-  try { st = JSON.parse(await fs.readFile(STATE, 'utf8')); } catch {}
+  const st = await readState();
+  if (st.defaultMusic && names.includes(st.defaultMusic)) {
+    return { path: path.join(MUSIC, st.defaultMusic), name: st.defaultMusic };
+  }
   const next = ((st.musicIndex ?? -1) + 1) % names.length;
-  await fs.writeFile(STATE, JSON.stringify({ ...st, musicIndex: next }));
+  await writeState({ ...st, musicIndex: next });
   return { path: path.join(MUSIC, names[next]), name: names[next] };
 }
-async function musicByName(name) {
+export async function musicByName(name) {
   if (!name) return null;
   const f = path.join(MUSIC, path.basename(name));
   return fssync.existsSync(f) ? { path: f, name: path.basename(name) } : null;

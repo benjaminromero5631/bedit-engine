@@ -55,6 +55,15 @@ button.dng{color:var(--usr)}
 .tl-row{display:flex;align-items:center;gap:6px;background:#1c1f25;border-radius:8px;padding:6px 8px;font-size:13px;flex-wrap:wrap}
 .tl-row button{padding:3px 8px;font-size:13px}
 .tl-row span.t{color:var(--mut)}
+.music{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+.music .mhead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.mlist{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.mtrk{display:flex;align-items:center;gap:6px;background:#1c1f25;border:1px solid var(--line);border-radius:99px;padding:6px 10px;font-size:13px;cursor:pointer}
+.mtrk.on{border-color:var(--ac);color:var(--ac)}
+.mtrk .star{color:var(--mut);cursor:pointer}
+.mtrk .star.on{color:var(--sus)}
+.mtrk .x{color:var(--mut);cursor:pointer}
+.mtrk .x:hover{color:var(--usr)}
 </style></head><body>
 <header><h1>B Edit · Revisión</h1><button id="refresh">Actualizar</button><button id="tok">Token</button></header>
 <main id="app"></main>
@@ -137,6 +146,10 @@ function render(d) {
   } else {
     h += '<p class="msg">Este video es de una versión anterior: se puede ver y aprobar, pero no editar palabras.</p>';
   }
+  h += '<div class="music"><div class="mhead"><b>🎵 Música</b><button id="mUp">Subir canción</button></div>' +
+    '<input type="file" id="mFile" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.flac,video/mp4,video/quicktime,.mov" style="display:none">' +
+    '<div class="legend" style="margin:6px 0 0">Click en una pista para aplicarla al toque (queda de fondo, bajo volumen, sin tapar tu voz). Dale play al video para escucharla ya mezclada. ★ = predeterminada para videos nuevos.</div>' +
+    '<div class="mlist" id="mList"><span class="msg">Cargando…</span></div></div>';
   h += '<div class="bar">';
   if (d.editable) h += '<button class="pri" id="apply" disabled>Aplicar cambios</button>';
   if (st === 'pendiente') h += '<button id="approve">Aprobar ✔</button><button class="dng" id="del">Eliminar</button>';
@@ -153,6 +166,7 @@ function render(d) {
     initTimeline(d);
     refreshInfo();
   }
+  wireMusic(d);
   var v = document.getElementById('v');
   v.ontimeupdate = function () {
     var t = v.currentTime, best = null;
@@ -341,6 +355,64 @@ function initTimeline(d) {
     document.addEventListener('mouseup', up);
   };
   drawCuts();
+}
+
+function wireMusic(d) {
+  var up = document.getElementById('mUp'), file = document.getElementById('mFile');
+  if (up) up.onclick = function () { file.click(); };
+  if (file) file.onchange = function () {
+    var f = file.files[0]; if (!f) return;
+    var fd = new FormData(); fd.append('file', f); fd.append('name', f.name);
+    var box = document.getElementById('mList'); if (box) box.innerHTML = '<span class="msg">Subiendo…</span>';
+    fetch('/music', { method: 'POST', headers: { Authorization: 'Bearer ' + TOKEN }, body: fd })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); })
+      .then(function () { file.value = ''; loadMusicList(d); })
+      .catch(function (e) { alert('Error al subir: ' + e.message); loadMusicList(d); });
+  };
+  loadMusicList(d);
+}
+function loadMusicList(d) {
+  var box = document.getElementById('mList'); if (!box) return;
+  api('/music').then(function (r) {
+    var tracks = r.tracks || [], def = r.default || null;
+    var sel = d.musicOff ? null : (d.musicName || def || null);
+    var h = '<span class="mtrk' + (sel === null ? ' on' : '') + '" data-pick="">Sin música</span>';
+    tracks.forEach(function (t) {
+      h += '<span class="mtrk' + (sel === t ? ' on' : '') + '" data-pick="' + esc(t) + '">' +
+        '<span class="star' + (def === t ? ' on' : '') + '" data-star="' + esc(t) + '" title="Hacer predeterminada">★</span> ' +
+        esc(t) + ' <span class="x" data-del="' + esc(t) + '" title="Borrar">✕</span></span>';
+    });
+    if (!tracks.length) h += '<span class="msg">Sube tu primera canción.</span>';
+    box.innerHTML = h;
+    Array.prototype.forEach.call(box.querySelectorAll('[data-pick]'), function (el) {
+      el.onclick = function (ev) {
+        if (ev.target.closest('[data-star],[data-del]')) return;
+        pickMusic(d, el.getAttribute('data-pick') || null);
+      };
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('[data-star]'), function (el) {
+      el.onclick = function (ev) {
+        ev.stopPropagation();
+        api('/music/default', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: el.getAttribute('data-star') }) })
+          .then(function () { loadMusicList(d); });
+      };
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('[data-del]'), function (el) {
+      el.onclick = function (ev) {
+        ev.stopPropagation();
+        var name = el.getAttribute('data-del');
+        if (!confirm('¿Borrar "' + name + '" de la biblioteca?')) return;
+        api('/music/' + encodeURIComponent(name), { method: 'DELETE' }).then(function () { loadMusicList(d); });
+      };
+    });
+  }).catch(function () { box.innerHTML = '<span class="msg">No se pudo cargar la música.</span>'; });
+}
+function pickMusic(d, name) {
+  var box = document.getElementById('mList');
+  if (box) box.innerHTML = '<span class="msg">Aplicando…</span>';
+  api('/jobs/' + cur + '/music', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ musicName: name }) })
+    .then(function () { openJob(cur); })
+    .catch(function (e) { alert('Error: ' + e.message); loadMusicList(d); });
 }
 
 function apply() {

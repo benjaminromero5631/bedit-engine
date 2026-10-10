@@ -1,5 +1,7 @@
 import { keepFromCuts, srcToOut, frameDb } from './core/cuts.js';
 import { editJob } from './pipeline.js';
+import { applyMusicOnly } from './render.js';
+import { run } from './media.js';
 import { REVIEW_HTML } from './review.js';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -7,7 +9,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import Busboy from 'busboy';
-import { initDirs, createJob, updateJob, enqueue, readJob, recover, cleanup, listMusic, JOBS, MUSIC } from './jobs.js';
+import { initDirs, createJob, updateJob, enqueue, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, JOBS, MUSIC } from './jobs.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
@@ -84,17 +86,39 @@ const server = http.createServer(async (req, res) => {
     if (!authed(req)) return send(res, 401, { error: 'No autorizado' });
 
     // ── música ──
-    if (p === '/music' && req.method === 'GET') return send(res, 200, { tracks: await listMusic() });
+    if (p === '/music' && req.method === 'GET') return send(res, 200, { tracks: await listMusic(), default: await getDefaultMusic() });
     if (p === '/music' && req.method === 'POST') {
       const tmp = path.join(MUSIC, `.up-${crypto.randomBytes(4).toString('hex')}`);
       const { fields, filename } = await receiveFile(req, tmp, 'file');
-      const name = path.basename(fields.name || filename || 'pista.mp3').replace(/[^\w\-. ()áéíóúñÁÉÍÓÚÑ]/g, '_');
+      const srcName = fields.name || filename || 'pista.mp3';
+      const isVideo = /\.(mp4|mov|m4v|webm)$/i.test(srcName);
+      if (isVideo) {
+        const name = path.basename(srcName).replace(/\.[^.]+$/, '').replace(/[^\w\-. ()áéíóúñÁÉÍÓÚÑ]/g, '_').slice(0, 80) + '.m4a';
+        const dest = path.join(MUSIC, name);
+        try { await run('ffmpeg', ['-y', '-v', 'error', '-i', tmp, '-vn', '-acodec', 'aac', '-b:a', '192k', dest]); }
+        catch (e) { await fsp.rm(tmp, { force: true }); return send(res, 400, { error: 'No se pudo sacar el audio de ese video' }); }
+        await fsp.rm(tmp, { force: true });
+        return send(res, 200, { ok: true, name });
+      }
+      const name = path.basename(srcName).replace(/[^\w\-. ()áéíóúñÁÉÍÓÚÑ]/g, '_');
       if (!/\.(mp3|m4a|wav|aac|ogg|flac)$/i.test(name)) { await fsp.rm(tmp, { force: true }); return send(res, 400, { error: 'Formato de música no soportado' }); }
       await fsp.rename(tmp, path.join(MUSIC, name));
       return send(res, 200, { ok: true, name });
     }
+    if (p === '/music/default' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+      if (body.name) { const t = await musicByName(body.name); if (!t) return send(res, 404, { error: 'Esa pista no existe' }); }
+      const def = await setDefaultMusic(body.name || null);
+      return send(res, 200, { ok: true, default: def });
+    }
     let m = p.match(/^\/music\/(.+)$/);
-    if (m && req.method === 'DELETE') { await fsp.rm(path.join(MUSIC, path.basename(decodeURIComponent(m[1]))), { force: true }); return send(res, 200, { ok: true }); }
+    if (m && req.method === 'DELETE') {
+      const name = path.basename(decodeURIComponent(m[1]));
+      await fsp.rm(path.join(MUSIC, name), { force: true });
+      if ((await getDefaultMusic()) === name) await setDefaultMusic(null);
+      return send(res, 200, { ok: true });
+    }
 
     // ── trabajos ──
     if (p === '/jobs' && req.method === 'POST') {
@@ -118,7 +142,7 @@ const server = http.createServer(async (req, res) => {
       for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, approved: !!j.approved, deleted: !!j.deleted, createdAt: j.createdAt }); }
       return send(res, 200, { jobs: out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) });
     }
-    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope|review|edit|approve|state))?$/);
+    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope|review|edit|approve|state|music))?$/);
     if (m) {
       const [, id, sub] = m;
       const job = await readJob(id);
@@ -134,7 +158,8 @@ const server = http.createServer(async (req, res) => {
         const { callbackUrl, ...pub } = job;
         let project = null;
         try { project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8')); } catch {}
-        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, deleted: !!pub.deleted, editable: false, words: [], duration: 0, manualCuts: [] };
+        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, deleted: !!pub.deleted, editable: false, words: [], duration: 0, manualCuts: [],
+          musicOff: pub.options?.music === false, musicName: pub.options?.musicName ?? (pub.stats?.musicName ?? null) };
         if (project) {
           out.duration = project.info.duration;
           out.manualCuts = project.manualCuts || [];
@@ -175,6 +200,22 @@ const server = http.createServer(async (req, res) => {
         await updateJob(id, { approved: false });
         await enqueue(id, 'rerender', next);
         return send(res, 202, { id, status: 'en cola' });
+      }
+      if (sub === 'music' && req.method === 'POST') {
+        if (job.status !== 'listo') return send(res, 409, { error: 'Aún no está listo' });
+        let body;
+        try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        const outDur = job.stats?.duration;
+        if (!Number.isFinite(outDur)) return send(res, 409, { error: 'Falta la duración del render anterior' });
+        let music = null;
+        const name = body.musicName === undefined ? undefined : (body.musicName || null);
+        if (name) { music = await musicByName(name); if (!music) return send(res, 404, { error: 'Esa pista no existe' }); }
+        try { await applyMusicOnly({ dir, outDur, music }); }
+        catch (e) { return send(res, 500, { error: e.message }); }
+        const nextOptions = { ...job.options, musicName: name || undefined, music: name ? true : false };
+        if (!name) delete nextOptions.musicName;
+        await updateJob(id, { options: nextOptions, stats: { ...job.stats, musicName: music?.name || null } });
+        return send(res, 200, { ok: true, musicName: music?.name || null });
       }
       if (sub === 'state' && req.method === 'POST') {
         let body;

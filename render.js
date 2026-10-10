@@ -93,6 +93,18 @@ async function buildVoice(dir, input, info, q) {
   return { voice, outDur, measured: m };
 }
 
+/** Arma el filtro de audio final: voz + música (opcional) de forma mezclada, o solo voz si no hay música. */
+async function musicAudioFilter(music, outDur, voiceLabel, musicIdx) {
+  if (!music) return { filter: `[${voiceLabel}]aresample=48000,aformat=channel_layouts=stereo,anull[aout]`, musicArgs: [] };
+  const mm = await measureLoudnorm(music.path);
+  const gain = Math.max(-30, Math.min(30, -14 - MUSIC_BELOW_DB - Number(mm.input_i)));
+  const musicArgs = ['-stream_loop', '-1', '-i', music.path];
+  const filter = `[${musicIdx}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:${f4(outDur)},asetpts=PTS-STARTPTS,volume=${gain.toFixed(2)}dB,`
+    + `afade=t=in:st=0:d=0.05,afade=t=out:st=${f4(Math.max(0, outDur - 1))}:d=1[m];`
+    + `[${voiceLabel}]aresample=48000,aformat=channel_layouts=stereo[v];[v][m]amix=inputs=2:duration=first:dropout_transition=0,volume=2,alimiter=limit=0.89:level=disabled[aout]`;
+  return { filter, musicArgs };
+}
+
 export async function renderVideo({ dir, input, info, plan, music, onProgress }) {
   registerFonts();
   const q = quantizeKeep(plan.keep, info.duration);
@@ -100,18 +112,8 @@ export async function renderVideo({ dir, input, info, plan, music, onProgress })
   const { voice, outDur } = await buildVoice(dir, input, info, q);
   onProgress?.(0.05);
 
-  // música
-  let musicArgs = [], audioFilter;
-  if (music) {
-    const mm = await measureLoudnorm(music.path);
-    const gain = Math.max(-30, Math.min(30, -14 - MUSIC_BELOW_DB - Number(mm.input_i)));
-    musicArgs = ['-stream_loop', '-1', '-i', music.path];
-    audioFilter = `[3:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:${f4(outDur)},asetpts=PTS-STARTPTS,volume=${gain.toFixed(2)}dB,`
-      + `afade=t=in:st=0:d=0.05,afade=t=out:st=${f4(Math.max(0, outDur - 1))}:d=1[m];`
-      + `[2:a]aresample=48000,aformat=channel_layouts=stereo[v];[v][m]amix=inputs=2:duration=first:dropout_transition=0,volume=2,alimiter=limit=0.89:level=disabled[aout]`;
-  } else {
-    audioFilter = `[2:a]aresample=48000,aformat=channel_layouts=stereo,anull[aout]`;
-  }
+  // música: [0]=input video, [1]=overlay rgba, [2]=voice, [3]=música (si hay)
+  const { filter: audioFilter, musicArgs } = await musicAudioFilter(music, outDur, '2:a', 3);
   const graph = [...videoGraph(info, q, plan.zoomEvents), audioFilter].join(';');
   const script = path.join(dir, 'video.graph');
   await fs.writeFile(script, graph);
@@ -180,4 +182,28 @@ export async function renderVideo({ dir, input, info, plan, music, onProgress })
   await done;
   const ln = await integratedLufs(out);
   return { file: out, frames: q.frames, duration: outDur, lufs: ln.lufs, peak: ln.peak, segments: q.segs.length };
+}
+
+/**
+ * Cambia solo la música de un video ya renderizado, sin re-renderizar el video (rápido, ~segundos).
+ * Reusa voice.wav del último render y el video de final.mp4 (copiado sin recodificar).
+ */
+export async function applyMusicOnly({ dir, outDur, music }) {
+  const voice = path.join(dir, 'voice.wav');
+  const finalPath = path.join(dir, 'final.mp4');
+  const tmp = path.join(dir, `final_tmp_${Date.now()}.mp4`);
+  try { await fs.access(voice); } catch { throw new Error('Este video no tiene un render previo del que partir'); }
+  // inputs: [0]=final.mp4 (solo usamos su video), [1]=voice.wav, [2]=música (si hay)
+  const { filter: audioFilter, musicArgs } = await musicAudioFilter(music, outDur, '1:a', 2);
+  const args = [
+    '-y', '-v', 'error', '-nostats',
+    '-i', finalPath, '-i', voice, ...musicArgs,
+    '-filter_complex', audioFilter,
+    '-map', '0:v', '-map', '[aout]',
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
+    '-t', f4(outDur), '-movflags', '+faststart', tmp,
+  ];
+  await run('ffmpeg', args);
+  await fs.rename(tmp, finalPath);
+  return { ok: true, musicName: music?.name || null };
 }

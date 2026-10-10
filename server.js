@@ -1,4 +1,4 @@
-import { keepFromCuts, srcToOut } from './core/cuts.js';
+import { keepFromCuts, srcToOut, frameDb } from './core/cuts.js';
 import { editJob } from './pipeline.js';
 import { REVIEW_HTML } from './review.js';
 import http from 'node:http';
@@ -134,13 +134,15 @@ const server = http.createServer(async (req, res) => {
         const { callbackUrl, ...pub } = job;
         let project = null;
         try { project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8')); } catch {}
-        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, deleted: !!pub.deleted, editable: false, words: [] };
+        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, deleted: !!pub.deleted, editable: false, words: [], duration: 0, manualCuts: [] };
         if (project) {
+          out.duration = project.info.duration;
+          out.manualCuts = project.manualCuts || [];
           const { keep } = keepFromCuts(project.cuts || [], project.info.duration);
           const inKeep = (t) => keep.some((k) => t >= k.s && t < k.e);
           const toks = [];
-          (project.words || []).forEach((w, i) => toks.push({ t: w.text || '?', start: w.start, i, x: w.x || 0, s: w.s ? 1 : 0, e: w.e ? 1 : 0, o: inKeep(w.start) ? Math.round(srcToOut(keep, w.start) * 100) / 100 : -1 }));
-          (project.fillers || []).forEach((f) => toks.push({ t: 'eh', start: f.start, f: 1, i: -1, x: 0, s: 0, o: -1 }));
+          (project.words || []).forEach((w, i) => toks.push({ t: w.text || '?', start: w.start, end: w.end, i, x: w.x || 0, s: w.s ? 1 : 0, e: w.e ? 1 : 0, o: inKeep(w.start) ? Math.round(srcToOut(keep, w.start) * 100) / 100 : -1 }));
+          (project.fillers || []).forEach((f) => toks.push({ t: 'eh', start: f.start, end: f.end, f: 1, i: -1, x: 0, s: 0, o: -1 }));
           toks.sort((a, b) => a.start - b.start);
           out.words = toks;
           out.editable = !!(project.words && project.words.length && project.words[0].raw);
@@ -156,7 +158,20 @@ const server = http.createServer(async (req, res) => {
         const removed = (Array.isArray(body.removed) ? body.removed : []).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < project.words.length);
         const edits = {};
         if (body.edits && typeof body.edits === 'object') for (const [k, v] of Object.entries(body.edits)) { const n = Number(k); if (Number.isInteger(n) && n >= 0 && n < project.words.length && typeof v === 'string') edits[n] = v.slice(0, 80); }
-        const next = await editJob({ dir, project, removed, edits });
+        const times = {};
+        if (body.times && typeof body.times === 'object') for (const [k, v] of Object.entries(body.times)) {
+          const n = Number(k);
+          if (Number.isInteger(n) && n >= 0 && n < project.words.length && v && Number.isFinite(v.start) && Number.isFinite(v.end) && v.end > v.start) {
+            times[n] = { start: Math.max(0, Number(v.start)), end: Math.min(project.info.duration, Number(v.end)) };
+          }
+        }
+        const manualCuts = [];
+        if (Array.isArray(body.manualCuts)) for (const c of body.manualCuts) {
+          if (c && Number.isFinite(c.s) && Number.isFinite(c.e) && c.e > c.s) {
+            manualCuts.push({ s: Math.max(0, Number(c.s)), e: Math.min(project.info.duration, Number(c.e)) });
+          }
+        }
+        const next = await editJob({ dir, project, removed, edits, times, manualCuts });
         await updateJob(id, { approved: false });
         await enqueue(id, 'rerender', next);
         return send(res, 202, { id, status: 'en cola' });
@@ -176,6 +191,19 @@ const server = http.createServer(async (req, res) => {
         await updateJob(id, { approved: true });
         await fireApproveHook(id, job);
         return send(res, 200, { ok: true });
+      }
+      if (sub === 'envelope' && req.method === 'GET') {
+        let buf;
+        try { buf = await fsp.readFile(path.join(dir, 'audio16k.wav')); } catch { return send(res, 404, { error: 'No hay audio para este video' }); }
+        const at = buf.indexOf('data');
+        const pcm = buf.subarray(at + 8);
+        const n = Math.floor(pcm.length / 4);
+        const audio = new Float32Array(n);
+        for (let i = 0; i < n; i++) audio[i] = pcm.readFloatLE(i * 4);
+        const hop = 0.05;
+        const db = frameDb(audio, 16000, hop);
+        const values = Array.from(db, (d) => Math.round(Math.max(0, Math.min(1, (d + 60) / 54)) * 100) / 100);
+        return send(res, 200, { hop, values });
       }
       if (sub === 'project' && req.method === 'GET') return streamFile(req, res, path.join(dir, 'project.json'), 'application/json', `${job.name || id}.project.json`);
       if (sub === 'input' && req.method === 'GET') return streamFile(req, res, path.join(dir, job.input), 'video/quicktime', `${job.name || id}.mov`);

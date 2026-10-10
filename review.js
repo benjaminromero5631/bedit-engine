@@ -133,7 +133,7 @@ function render(d) {
     h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button><button id="m3">Mover tiempo</button></div>';
     h += '<div class="words" id="words"></div>';
     h += '<div class="legend"><span style="color:var(--rep)">naranja</span> = repetición quitada sola · <span style="color:var(--usr)">rojo</span> = la quitaste tú · <span style="box-shadow:inset 0 -2px 0 var(--sus)">subrayado</span> = sospechoso · gris = muletilla · <span style="border-bottom:2px dashed var(--ac)">subrayado punteado</span> = editada/movida. "Quitar palabras": toca para quitar/recuperar. "Editar texto": toca para corregir. "Mover tiempo": toca y escribe cuántos cuadros (1/30s) desplazar esa palabra/subtítulo.</div>';
-    h += '<div class="tl"><div class="legend" style="margin-top:0">Línea de tiempo: arrastra sobre el audio para cortar un tramo libre (se ajusta solo al borde de palabra más cercano). Arrastra los bordes rojos para ajustarlos, o usa los botones de cuadro a cuadro.</div><div class="tl-scroll"><div id="tlwrap" class="tl-wrap"></div></div><div id="tllist" class="tl-list"></div></div>';
+    h += '<div class="tl"><div class="legend" style="margin-top:0">Línea de tiempo: arrastra sobre el audio para cortar un tramo libre, a tu gusto (si quedas muy cerca de una palabra, se pega solo). Arrastra los bordes rojos para ajustarlos, o usa los botones de cuadro a cuadro.</div><div class="tl-scroll"><div id="tlwrap" class="tl-wrap"></div></div><div id="tllist" class="tl-list"></div></div>';
   } else {
     h += '<p class="msg">Este video es de una versión anterior: se puede ver y aprobar, pero no editar palabras.</p>';
   }
@@ -238,11 +238,15 @@ function initTimeline(d) {
     words.forEach(function (w) { if (w.i >= 0) { e.push(w.start); e.push(w.end); } });
     return e.sort(function (a, b) { return a - b; });
   }
+  function magnet(t) {
+    var e = edgesOf(), best = t, bd = Infinity;
+    e.forEach(function (x) { var dd = Math.abs(x - t); if (dd < bd) { bd = dd; best = x; } });
+    return bd <= 0.12 ? best : t;
+  }
   function snapRange(a, b) {
-    var e = edgesOf();
-    function nearest(t) { var best = t, bd = Infinity; e.forEach(function (x) { var dd = Math.abs(x - t); if (dd < bd) { bd = dd; best = x; } }); return best; }
-    var s = nearest(a), en = nearest(b);
-    if (en <= s) en = Math.min(tlDur, s + 1 / 30);
+    var s = magnet(Math.max(0, Math.min(a, b)));
+    var en = magnet(Math.max(a, b));
+    if (en - s < 1 / 30) en = Math.min(tlDur, s + 1 / 30);
     return { s: Math.round(s * 1000) / 1000, e: Math.round(en * 1000) / 1000 };
   }
   function drawCuts() {

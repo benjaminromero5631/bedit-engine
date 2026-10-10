@@ -1,7 +1,7 @@
 // Plan de edición (puro, sin I/O): frases, zooms y apoyos. Port fiel de la extensión.
 import { PRESET } from './config.js';
 import { stripPunct, plainText } from './draw.js';
-import { keepFromCuts, srcToOut, outToSrc, detectCuts, CUT_PRESETS } from './cuts.js';
+import { keepFromCuts, srcToOut, outToSrc, detectCuts, mergeCutRanges, CUT_PRESETS } from './cuts.js';
 
 export function mulberry32(a) {
   return function () {
@@ -181,12 +181,13 @@ export function markSuspects(words, gapSec = 0.5) {
 }
 
 /** Plan a partir de las palabras (las marcadas con `x` se sacan del video, subtítulos y cortes). */
-export function planFromWords({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1 }) {
+export function planFromWords({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, manualCuts = [] }) {
   const cfg = CUT_PRESETS[sensitivity] || CUT_PRESETS.normal;
   const active = words.filter((w) => !w.x);
   const chunks = active.map((w) => ({ text: w.raw, timestamp: [w.start, w.end] }));
   const { phrases } = buildPhrases(chunks);
-  const cuts = detectCuts(audio16k, sr, active, fillers, duration, cfg);
+  let cuts = detectCuts(audio16k, sr, active, fillers, duration, cfg);
+  if (manualCuts.length) cuts = mergeCutRanges([...cuts, ...manualCuts.map((m) => ({ s: m.s, e: m.e, on: true }))]);
   return replan({ phrases, words, fillers, cuts, duration, seed });
 }
 
@@ -198,8 +199,8 @@ export function makePlan({ audio16k, sr = 16000, chunks, duration, sensitivity =
   return planFromWords({ audio16k, sr, words, fillers, duration, sensitivity, seed });
 }
 
-/** Re-plan tras revisar: removed = índices de palabras que Benjamin quiere fuera; edits = {índice: texto corregido}. */
-export function editPlan({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, removed, edits = {} }) {
+/** Re-plan tras revisar: removed = índices que Benjamin quiere fuera; edits = {índice: texto}; times = {índice: {start,end}} (mover palabra/subtítulo); manualCuts = [{s,e}] cortes libres que dibujó en la línea de tiempo. */
+export function editPlan({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, removed, edits = {}, times = {}, manualCuts = [] }) {
   const ws = words.map((w, i) => {
     const c = { ...w };
     if (removed.has(i)) c.x = c.x || 'user'; else delete c.x;
@@ -208,9 +209,14 @@ export function editPlan({ audio16k, sr = 16000, words, fillers, duration, sensi
       const tail = (String(w.raw || '').match(/[.?!…,;:]+$/) || [''])[0];
       c.text = stripPunct(t.trim()); c.raw = t.trim() + (/[.?!…,;:]$/.test(t.trim()) ? '' : tail); c.e = true;
     }
+    const tm = times[i];
+    if (tm && Number.isFinite(tm.start) && Number.isFinite(tm.end) && tm.end - tm.start > 0.02) {
+      c.start = Math.max(0, tm.start); c.end = Math.min(duration, tm.end);
+    }
     return c;
   });
-  return planFromWords({ audio16k, sr, words: ws, fillers, duration, sensitivity, seed });
+  const plan = planFromWords({ audio16k, sr, words: ws, fillers, duration, sensitivity, seed, manualCuts });
+  return { ...plan, manualCuts };
 }
 
 /** Recalcula keep/zooms/apoyos a partir de frases y cortes (también para re-render tras revisión). */

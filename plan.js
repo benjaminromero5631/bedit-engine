@@ -25,7 +25,8 @@ export function buildPhrases(chunks) {
     const a = c.timestamp?.[0] ?? 0;
     const b = c.timestamp?.[1] ?? a + 0.3;
     if (PRESET.fillerRegex.test(clean)) { fillers.push({ start: a, end: Math.max(b, a + 0.05) }); continue; }
-    words.push({ raw, clean, start: a, end: Math.max(b, a + 0.05) });
+    const confidence = Number.isFinite(c.confidence) ? c.confidence : null;
+    words.push({ raw, clean, start: a, end: Math.max(b, a + 0.05), confidence });
   }
   const phrases = [];
   let cur = [];
@@ -49,7 +50,7 @@ export function buildPhrases(chunks) {
     if (nxt) phrases[i].end = nxt.start - phrases[i].end < 0.35 ? nxt.start : Math.min(phrases[i].end + 0.2, nxt.start);
     else phrases[i].end += 0.2;
   }
-  return { phrases, words: words.map((w) => ({ start: w.start, end: w.end, text: w.clean, raw: w.raw })), fillers };
+  return { phrases, words: words.map((w) => ({ start: w.start, end: w.end, text: w.clean, raw: w.raw, confidence: w.confidence })), fillers };
 }
 
 const STOP = new Set('el la los las un una unos unas de del al a en y o u e que se su sus mi mis tu tus me te lo le les con por para como más mas pero si sí no ya es son fue era ser está esta están este esto eso esa ese muy hay he ha han yo tú vas voy va ahí ahi'.split(' '));
@@ -169,6 +170,8 @@ export function detectRepeats(words, { maxLen = 10, maxGap = 2.0 } = {}) {
 
 /** Marca como "sospechosos" arranques sueltos (1–3 palabras) separados del resto por pausas. No se quitan solos. */
 export function markSuspects(words, gapSec = 0.5) {
+  // La confianza baja es una señal para revisar, nunca una orden de borrar audio.
+  words.forEach((w) => { if (Number.isFinite(w.confidence) && w.confidence < 0.45 && !w.x) w.s = true; });
   const groups = [];
   let cur = [];
   words.forEach((w, i) => {

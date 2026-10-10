@@ -183,7 +183,7 @@ const server = http.createServer(async (req, res) => {
           const toks = [];
           (project.words || []).forEach((w, i) => {
             const mapped = mapWord(w);
-            toks.push({ t: w.text || '?', start: w.start, end: w.end, i, x: w.x || 0, s: w.s ? 1 : 0, e: w.e ? 1 : 0,
+            toks.push({ t: w.text || '?', start: w.start, end: w.end, i, x: w.x || 0, s: w.s ? 1 : 0, e: w.e ? 1 : 0, c: w.confidence ?? null,
               o: Math.round(mapped.o * 100) / 100, oe: Math.round(mapped.oe * 100) / 100 });
           });
           (project.fillers || []).forEach((f) => toks.push({ t: 'eh', start: f.start, end: f.end, f: 1, i: -1, x: 0, s: 0, o: -1 }));

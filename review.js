@@ -144,7 +144,7 @@ function render(d) {
   if (d.editable) {
     h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button><button id="m3">Mover tiempo</button></div>';
     h += '<div class="words" id="words"></div>';
-    h += '<div class="legend"><span style="color:var(--rep)">naranja</span> = repetición quitada sola · <span style="color:var(--usr)">rojo</span> = la quitaste tú · <span style="box-shadow:inset 0 -2px 0 var(--sus)">subrayado</span> = sospechoso · gris = muletilla · <span style="border-bottom:2px dashed var(--ac)">subrayado punteado</span> = editada/movida. "Quitar palabras": toca para quitar/recuperar. "Editar texto": toca para corregir. "Mover tiempo": toca y escribe cuántos cuadros (1/30s) desplazar esa palabra/subtítulo.</div>';
+    h += '<div class="legend"><span style="color:var(--rep)">naranja</span> = repetición quitada sola · <span style="color:var(--usr)">rojo</span> = la quitaste tú · <span style="box-shadow:inset 0 -2px 0 var(--sus)">subrayado</span> = revisar (incluye confianza baja de Whisper; pasa el cursor para ver el dato) · gris = muletilla/corte · <span style="border-bottom:2px dashed var(--ac)">subrayado punteado</span> = editada/movida. La confianza baja solo marca revisión, no borra la palabra. "Quitar palabras": toca para quitar/recuperar. "Editar texto": toca para corregir. "Mover tiempo": toca y escribe cuántos cuadros (1/30s) desplazar esa palabra/subtítulo.</div>';
   h += '<div class="tl"><div class="legend" style="margin-top:0">Línea de tiempo del video original: amarillo rayado = tramo que se quitará automáticamente; rojo = corte manual. El cursor sigue el video aunque haya cortes. Arrastra sobre el audio para añadir un corte manual; si toca palabras, aparecerá un aviso antes de aplicar.</div><div class="tl-scroll"><div id="tlwrap" class="tl-wrap"></div></div><div id="tllist" class="tl-list"></div><div id="tlwarning" class="tl-warning"></div></div>';
   } else {
     h += '<p class="msg">Este video es de una versión anterior: se puede ver y aprobar, pero no editar palabras.</p>';
@@ -228,7 +228,8 @@ function drawWords() {
   var box = document.getElementById('words'), h = '';
   words.forEach(function (w, k) {
     if (w.f) { h += '<span class="w fil" id="w' + k + '">' + esc(w.t) + '</span> '; return; }
-    h += '<span class="' + wcls(w) + '" id="w' + k + '" data-k="' + k + '">' + esc(edits[w.i] !== undefined ? edits[w.i] : w.t) + '</span> ';
+    var title = typeof w.c === 'number' ? (w.c < 0.45 ? 'Revisar: confianza de Whisper ' : 'Confianza de Whisper ') + Math.round(w.c * 100) + '%' : '';
+    h += '<span class="' + wcls(w) + '" id="w' + k + '" data-k="' + k + '" title="' + title + '">' + esc(edits[w.i] !== undefined ? edits[w.i] : w.t) + '</span> ';
   });
   box.innerHTML = h;
   Array.prototype.forEach.call(box.querySelectorAll('.w[data-k]'), function (el) {

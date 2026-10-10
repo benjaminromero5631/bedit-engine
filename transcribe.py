@@ -20,7 +20,9 @@ def main():
         for w in (seg.words or []):
             t = w.word.strip()
             if t:
-                chunks.append({"text": t, "timestamp": [round(w.start, 3), round(w.end, 3)]})
+                confidence = getattr(w, "probability", None)
+                chunks.append({"text": t, "timestamp": [round(w.start, 3), round(w.end, 3)],
+                               "confidence": round(float(confidence), 3) if confidence is not None else None})
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"language": info.language, "model": size, "chunks": chunks}, f, ensure_ascii=False)
 

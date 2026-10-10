@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { detectCuts, keepFromCuts, srcToOut, outToSrc } from './cuts.js';
-import { generateZooms, planFromWords } from './plan.js';
+import { buildPhrases, generateZooms, markSuspects, planFromWords } from './plan.js';
 
 test('time mapping skips removed source intervals without shifting them onto later footage', () => {
   const { keep } = keepFromCuts([{ s: 1, e: 2, on: true }], 4);
@@ -60,4 +60,16 @@ test('speech-aligned cuts remove a loud non-speech blip in a long pause', () => 
   for (const w of words) {
     assert.ok(cuts.every((c) => Math.min(c.e, w.end) - Math.max(c.s, w.start) < 1 / 60), 'no debe cortar palabras reconocidas');
   }
+});
+
+test('low Whisper confidence is exposed for review, not auto-deleted', () => {
+  const { words } = buildPhrases([
+    { text: 'hola', timestamp: [0.1, 0.3], confidence: 0.32 },
+    { text: 'amigo', timestamp: [0.35, 0.65], confidence: 0.91 },
+  ]);
+  markSuspects(words);
+  assert.equal(words[0].confidence, 0.32);
+  assert.equal(words[0].s, true);
+  assert.equal(words[0].x, undefined);
+  assert.equal(words[1].s, undefined);
 });

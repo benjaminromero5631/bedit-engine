@@ -30,3 +30,19 @@ jobs:
         run: npm test
       - name: End-to-end smoke
         run: npm run smoke
+      - name: Build production Docker image
+        run: docker build --tag bedit-engine:ci .
+      - name: Start image and verify health endpoint
+        run: |
+          docker run --detach --name bedit-engine-ci --publish 18080:8080 \
+            --env BEDIT_TOKEN=ci-validation-token-1234567890 bedit-engine:ci
+          trap 'docker rm --force bedit-engine-ci >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if response=$(curl --silent --show-error --fail http://127.0.0.1:18080/health); then
+              test "$response" = '{"ok":true}'
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs bedit-engine-ci
+          exit 1

@@ -15,6 +15,10 @@ button:disabled{opacity:.4;cursor:default}
 main{max-width:1000px;margin:0 auto;padding:16px}
 .list{display:grid;gap:8px}
 .item{display:flex;justify-content:space-between;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer}
+.item-info{min-width:0;overflow-wrap:anywhere}
+.item-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.download{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--ac);color:#06210f;text-decoration:none;font-weight:650;padding:9px 12px;border-radius:10px;white-space:nowrap}
+.download:hover{filter:brightness(1.08)}
 .item small{color:var(--mut)}
 .tag{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--mut)}
 .tag.ok{color:var(--ac);border-color:var(--ac)}
@@ -137,13 +141,16 @@ function drawList() {
     h += '<div class="list">';
     rows.forEach(function (j) {
       var st = j.status === 'listo' ? '<span class="tag ok">listo</span>' : '<span class="tag">' + esc(j.status) + (j.progress ? ' ' + Math.round(j.progress * 100) + '%' : '') + '</span>';
-      h += '<div class="item" data-id="' + j.id + '"><div>' + esc(j.name || j.id) + '<br><small>' + new Date(j.createdAt).toLocaleString('es-CL') + '</small></div><div>' + st + '</div></div>';
+      h += '<div class="item" data-id="' + j.id + '"><div class="item-info">' + esc(j.name || j.id) + '<br><small>' + new Date(j.createdAt).toLocaleString('es-CL') + '</small></div><div class="item-actions">' + st;
+      if (tab === 'aprobado' && j.status === 'listo') h += '<a class="download" href="/jobs/' + j.id + '/result?t=' + encodeURIComponent(TOKEN) + '" aria-label="Descargar ' + esc(j.name || 'video') + '">⬇ Descargar</a>';
+      h += '</div></div>';
     });
     h += '</div>';
   }
   app.innerHTML = h;
   Array.prototype.forEach.call(app.querySelectorAll('.tabs button'), function (el) { el.onclick = function () { tab = el.getAttribute('data-tab'); drawList(); }; });
   Array.prototype.forEach.call(app.querySelectorAll('.item'), function (el) { el.onclick = function () { openJob(el.getAttribute('data-id')); }; });
+  Array.prototype.forEach.call(app.querySelectorAll('.item .download'), function (el) { el.onclick = function (event) { event.stopPropagation(); }; });
 }
 
 function openJob(id) {
@@ -166,6 +173,7 @@ function render(d) {
   if (d.status === 'error') h += '<p class="msg">Hubo un error: ' + esc(d.error || '') + '</p>';
   var st = d.deleted ? 'eliminado' : (d.approved ? 'aprobado' : 'pendiente');
   h += '<div class="detail"><div><video id="v" controls playsinline src="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '&v=' + Date.now() + '"></video></div><div>';
+  if (st === 'aprobado' && d.status === 'listo') h += '<a class="download" href="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '">⬇ Descargar video aprobado</a>';
   if (d.editable) {
     h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button><button id="m3">Mover tiempo</button></div>';
     h += '<div class="words" id="words"></div>';

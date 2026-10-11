@@ -11,7 +11,7 @@ import { run, lowPriority, alignFilter, measureLoudnorm, integratedLufs } from '
 
 const FPS = 30;
 const W = PRESET.output.width, H = PRESET.output.height;
-const MUSIC_BELOW_DB = Number(process.env.MUSIC_BELOW_DB || 18);   // la música queda así de dB bajo la voz
+const MUSIC_BELOW_DB = Number(process.env.MUSIC_BELOW_DB || 15);   // la música queda así de dB bajo la voz
 const f4 = (x) => Number(x).toFixed(5);
 
 /** Tramos que se quedan, alineados a la grilla de 30 fps (video y audio quedan con el mismo largo exacto). */

@@ -100,4 +100,4 @@ Todas con `Authorization: Bearer <BEDIT_TOKEN>` (salvo `/health`).
 ## Variables
 
 `BEDIT_TOKEN` (obligatoria) · `WHISPER_MODEL` (small) · `X264_PRESET` (slow) · `X264_CRF` (17) ·
-`THREADS` · `NICE` (10) · `HDR_MODE` (`tonemap` o `keep`) · `MUSIC` (`off`) · `MUSIC_BELOW_DB` (18) · `RETENTION_DAYS` (7).
+`THREADS` · `NICE` (10) · `HDR_MODE` (`tonemap` o `keep`) · `MUSIC` (`off`) · `MUSIC_BELOW_DB` (15) · `RETENTION_DAYS` (7).

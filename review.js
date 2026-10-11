@@ -28,6 +28,7 @@ video{width:100%;max-height:70vh;background:#000;border-radius:12px}
 .w.cur{background:#2c3a33;outline:1px solid var(--ac)}
 .w.rep{color:var(--rep);text-decoration:line-through}
 .w.usr{color:var(--usr);text-decoration:line-through}
+.w.keep{color:#7ee5b3;text-decoration:none;box-shadow:inset 0 -2px 0 #38c787}
 .w.sus{box-shadow:inset 0 -2px 0 var(--sus)}
 .w.fil{color:var(--mut);text-decoration:line-through;cursor:default;font-size:14px}
 .w.cut{color:#717782;text-decoration:line-through;opacity:.72}
@@ -80,7 +81,7 @@ button.dng{color:var(--usr)}
 var TOKEN = '';
 try { TOKEN = localStorage.getItem('bedit_token') || ''; } catch (e) {}
 var app = document.getElementById('app');
-var cur = null, removed = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [];
+var cur = null, removed = {}, restored = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [];
 var tlPxPerSec = 0, tlDur = 0, tlKeep = [];
 
 function api(path, opts) {
@@ -146,14 +147,14 @@ function drawList() {
 }
 
 function openJob(id) {
-  cur = id; removed = {}; edits = {}; times = {}; manualCuts = []; dirty = false; mode = 'quitar'; clearInterval(poll);
+  cur = id; removed = {}; restored = {}; edits = {}; times = {}; manualCuts = []; dirty = false; mode = 'quitar'; clearInterval(poll);
   app.innerHTML = '<p class="msg">Cargando…</p>';
   api('/jobs/' + id + '/review').then(function (d) { render(d); }).catch(function (e) { app.innerHTML = '<p class="msg">Error: ' + esc(e.message) + '</p><button onclick="showList()">Volver</button>'; });
 }
 
 function render(d) {
   words = d.words;
-  words.forEach(function (w) { if (w.i >= 0 && w.x) removed[w.i] = true; });
+  words.forEach(function (w) { if (w.i >= 0 && w.x) removed[w.i] = true; if (w.i >= 0 && w.k) restored[w.i] = true; });
   var busy = d.status !== 'listo';
   var h = '<div class="top"><button id="back">← Videos</button><b>' + esc(d.name || cur) + '</b>' + (d.approved ? ' <span class="tag ok">aprobado</span>' : '') + '</div>';
   if (busy) {
@@ -168,7 +169,7 @@ function render(d) {
   if (d.editable) {
     h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button><button id="m3">Mover tiempo</button></div>';
     h += '<div class="words" id="words"></div>';
-    h += '<div class="legend"><span style="color:var(--rep)">naranja</span> = repetición quitada sola · <span style="color:var(--usr)">rojo</span> = la quitaste tú · <span style="box-shadow:inset 0 -2px 0 var(--sus)">subrayado</span> = revisar (incluye confianza baja de Whisper; pasa el cursor para ver el dato) · gris = muletilla/corte · <span style="border-bottom:2px dashed var(--ac)">subrayado punteado</span> = editada/movida. La confianza baja solo marca revisión, no borra la palabra. "Quitar palabras": toca para quitar/recuperar. "Editar texto": toca para corregir. "Mover tiempo": toca y escribe cuántos cuadros (1/30s) desplazar esa palabra/subtítulo.</div>';
+  h += '<div class="legend"><span style="color:var(--rep)">naranja</span> = repetición quitada sola · <span style="color:var(--usr)">rojo</span> = la quitaste tú · <span style="box-shadow:inset 0 -2px 0 var(--sus)">subrayado</span> = revisar (incluye confianza baja de Whisper; pasa el cursor para ver el dato) · gris = muletilla/corte · <span style="border-bottom:2px dashed var(--ac)">subrayado punteado</span> = editada/movida. La confianza baja solo marca revisión, no borra la palabra. "Quitar palabras": toca para quitar/recuperar; las palabras restauradas desde cortes se marcan en verde. "Editar texto": toca para corregir. "Mover tiempo": toca y escribe cuántos cuadros (1/30s) desplazar esa palabra/subtítulo.</div>';
   h += '<div class="tl"><div class="legend" style="margin-top:0">Línea de tiempo del video original: amarillo rayado = tramo que se quitará automáticamente; rojo = corte manual. El cursor sigue el video aunque haya cortes. Arrastra sobre el audio para añadir un corte manual; si toca palabras, aparecerá un aviso antes de aplicar.</div><div class="tl-scroll"><div id="tlwrap" class="tl-wrap"></div></div><div id="tllist" class="tl-list"></div><div id="tlwarning" class="tl-warning"></div></div>';
   } else {
     h += '<p class="msg">Este video es de una versión anterior: se puede ver y aprobar, pero no editar palabras.</p>';
@@ -227,7 +228,7 @@ function setState(s) {
 function refreshInfo() {
   var apBtn = document.getElementById('apply'); if (apBtn) apBtn.disabled = false;
   var info = document.getElementById('info');
-  if (info) info.textContent = Object.keys(removed).length + ' quitadas · ' + Object.keys(edits).length + ' corregidas · ' + Object.keys(times).length + ' movidas · ' + manualCuts.length + ' cortes manuales';
+  if (info) info.textContent = Object.keys(removed).length + ' quitadas · ' + Object.keys(restored).length + ' recuperadas · ' + Object.keys(edits).length + ' corregidas · ' + Object.keys(times).length + ' movidas · ' + manualCuts.length + ' cortes manuales';
   var warning = document.getElementById('tlwarning');
   if (warning) {
     var hit = {};
@@ -242,8 +243,9 @@ function refreshInfo() {
 
 function wcls(w) {
   var c = 'w';
-  if (w.o < 0 && !w.x) c += ' cut';
+  if (w.o < 0 && !w.x && !restored[w.i]) c += ' cut';
   if (removed[w.i]) c += w.x === 'rep' ? ' rep' : ' usr';
+  if (restored[w.i]) c += ' keep';
   if (w.s) c += ' sus';
   if (w.e || edits[w.i] !== undefined || times[w.i] !== undefined) c += ' edt';
   return c;
@@ -270,7 +272,10 @@ function drawWords() {
         var n = parseInt(inp, 10); if (!isFinite(n)) return;
         if (n === 0) delete times[w.i]; else times[w.i] = { start: w.start + n / 30, end: w.end + n / 30 };
       } else {
-        if (removed[w.i]) delete removed[w.i]; else removed[w.i] = true;
+        if (removed[w.i]) delete removed[w.i];
+        else if (restored[w.i]) delete restored[w.i];
+        else if (w.o < 0 && !w.x) restored[w.i] = true;
+        else removed[w.i] = true;
       }
       el.className = wcls(w);
       refreshInfo();
@@ -497,7 +502,7 @@ function apply() {
   if (hitCount && !confirm('Los cortes seleccionados eliminarán ' + hitCount + ' palabra' + (hitCount === 1 ? '' : 's') + ' hablada' + (hitCount === 1 ? '' : 's') + '. ¿Aplicar de todos modos?')) return;
   var btn = document.getElementById('apply'); btn.disabled = true;
   document.getElementById('info').textContent = 'Enviando…';
-  api('/jobs/' + cur + '/edit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ removed: Object.keys(removed).map(Number), edits: edits, times: times, manualCuts: manualCuts }) })
+  api('/jobs/' + cur + '/edit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ removed: Object.keys(removed).map(Number), restored: Object.keys(restored).map(Number), edits: edits, times: times, manualCuts: manualCuts }) })
     .then(function () { openJob(cur); })
     .catch(function (e) { document.getElementById('info').textContent = 'Error: ' + e.message; btn.disabled = false; });
 }

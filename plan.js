@@ -186,19 +186,35 @@ export function markSuspects(words, gapSec = 0.5) {
 }
 
 /** Plan a partir de las palabras (las marcadas con `x` se sacan del video, subtítulos y cortes). */
+function subtractRanges(ranges, holes) {
+  let out = ranges.map((r) => ({ ...r }));
+  for (const keep of holes) {
+    const next = [];
+    for (const r of out) {
+      if (keep.e <= r.s || keep.s >= r.e) { next.push(r); continue; }
+      if (keep.s > r.s) next.push({ ...r, e: keep.s });
+      if (keep.e < r.e) next.push({ ...r, s: keep.e });
+    }
+    out = next;
+  }
+  return out.filter((r) => r.e - r.s >= 1 / 60);
+}
+
 export function planFromWords({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, manualCuts = [] }) {
   const cfg = CUT_PRESETS[sensitivity] || CUT_PRESETS.normal;
   const requested = words.filter((w) => !w.x);
   const cutOverlap = (w, c) => Math.min(w.end, c.e) - Math.max(w.start, c.s) >= 1 / 60;
   const manualCutWords = (w) => manualCuts.some((c) => cutOverlap(w, c));
   const candidates = requested.filter((w) => !manualCutWords(w));
-  let cuts = detectCuts(audio16k, sr, candidates, fillers, duration, cfg);
-  if (manualCuts.length) cuts = mergeCutRanges([...cuts, ...manualCuts.map((m) => ({ s: m.s, e: m.e, on: true }))]);
+  const restored = requested.filter((w) => w.k).map((w) => ({ s: Math.max(0, w.start - 1 / 30), e: Math.min(duration, w.end + 1 / 30) }));
+  let cuts = subtractRanges(detectCuts(audio16k, sr, candidates, fillers, duration, cfg), restored);
+  const keptManualCuts = subtractRanges(manualCuts, restored);
+  if (keptManualCuts.length) cuts = mergeCutRanges([...cuts, ...keptManualCuts.map((m) => ({ s: m.s, e: m.e, on: true }))]);
   // Un corte manual o automático no debe dejar palabras sin audio dentro del subtítulo.
   // Ignora solapamientos menores a medio cuadro: la salida se cuantiza a 30 fps
   // y un roce de pocos milisegundos en un borde no debe borrar una palabra entera.
   const cutWords = (w) => cuts.some((c) => cutOverlap(w, c));
-  const active = candidates.filter((w) => !cutWords(w));
+  const active = candidates.filter((w) => w.k || !cutWords(w));
   const chunks = active.map((w) => ({ text: w.raw, timestamp: [w.start, w.end] }));
   const { phrases } = buildPhrases(chunks);
   return replan({ phrases, words, fillers, cuts, duration, seed });
@@ -213,10 +229,11 @@ export function makePlan({ audio16k, sr = 16000, chunks, duration, sensitivity =
 }
 
 /** Re-plan tras revisar: removed = índices que Benjamin quiere fuera; edits = {índice: texto}; times = {índice: {start,end}} (mover palabra/subtítulo); manualCuts = [{s,e}] cortes libres que dibujó en la línea de tiempo. */
-export function editPlan({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, removed, edits = {}, times = {}, manualCuts = [] }) {
+export function editPlan({ audio16k, sr = 16000, words, fillers, duration, sensitivity = 'normal', seed = 1, removed, restored = new Set(), edits = {}, times = {}, manualCuts = [] }) {
   const ws = words.map((w, i) => {
     const c = { ...w };
     if (removed.has(i)) c.x = c.x || 'user'; else delete c.x;
+    if (restored.has(i) && !removed.has(i)) c.k = true; else delete c.k;
     const t = edits[i];
     if (typeof t === 'string' && t.trim() && stripPunct(t.trim()) !== stripPunct(w.raw || w.text)) {
       const tail = (String(w.raw || '').match(/[.?!…,;:]+$/) || [''])[0];
@@ -228,8 +245,10 @@ export function editPlan({ audio16k, sr = 16000, words, fillers, duration, sensi
     }
     return c;
   });
-  const plan = planFromWords({ audio16k, sr, words: ws, fillers, duration, sensitivity, seed, manualCuts });
-  return { ...plan, manualCuts };
+  const keepIntervals = ws.filter((w) => w.k && !w.x).map((w) => ({ s: Math.max(0, w.start - 1 / 30), e: Math.min(duration, w.end + 1 / 30) }));
+  const keptManualCuts = subtractRanges(manualCuts, keepIntervals);
+  const plan = planFromWords({ audio16k, sr, words: ws, fillers, duration, sensitivity, seed, manualCuts: keptManualCuts });
+  return { ...plan, manualCuts: keptManualCuts };
 }
 
 /** Recalcula keep/zooms/apoyos a partir de frases y cortes (también para re-render tras revisión). */

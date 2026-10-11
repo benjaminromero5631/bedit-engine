@@ -183,7 +183,7 @@ const server = http.createServer(async (req, res) => {
           const toks = [];
           (project.words || []).forEach((w, i) => {
             const mapped = mapWord(w);
-            toks.push({ t: w.text || '?', start: w.start, end: w.end, i, x: w.x || 0, s: w.s ? 1 : 0, e: w.e ? 1 : 0, c: w.confidence ?? null,
+            toks.push({ t: w.text || '?', start: w.start, end: w.end, i, x: w.x || 0, k: w.k ? 1 : 0, s: w.s ? 1 : 0, e: w.e ? 1 : 0, c: w.confidence ?? null,
               o: Math.round(mapped.o * 100) / 100, oe: Math.round(mapped.oe * 100) / 100 });
           });
           (project.fillers || []).forEach((f) => toks.push({ t: 'eh', start: f.start, end: f.end, f: 1, i: -1, x: 0, s: 0, o: -1 }));
@@ -200,6 +200,7 @@ const server = http.createServer(async (req, res) => {
         const project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8'));
         if (!project.words?.length || !project.words[0].raw) return send(res, 400, { error: 'Este video es de una versión anterior y no se puede editar por palabras' });
         const removed = (Array.isArray(body.removed) ? body.removed : []).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < project.words.length);
+        const restored = (Array.isArray(body.restored) ? body.restored : []).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < project.words.length);
         const edits = {};
         if (body.edits && typeof body.edits === 'object') for (const [k, v] of Object.entries(body.edits)) { const n = Number(k); if (Number.isInteger(n) && n >= 0 && n < project.words.length && typeof v === 'string') edits[n] = v.slice(0, 80); }
         const times = {};
@@ -215,7 +216,7 @@ const server = http.createServer(async (req, res) => {
             manualCuts.push({ s: Math.max(0, Number(c.s)), e: Math.min(project.info.duration, Number(c.e)) });
           }
         }
-        const next = await editJob({ dir, project, removed, edits, times, manualCuts });
+        const next = await editJob({ dir, project, removed, restored, edits, times, manualCuts });
         await updateJob(id, { approved: false });
         await enqueue(id, 'rerender', next);
         return send(res, 202, { id, status: 'en cola' });

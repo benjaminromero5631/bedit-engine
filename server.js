@@ -142,6 +142,18 @@ const server = http.createServer(async (req, res) => {
       for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, approved: !!j.approved, deleted: !!j.deleted, createdAt: j.createdAt }); }
       return send(res, 200, { jobs: out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) });
     }
+    if (p === '/jobs/clear-deleted' && req.method === 'POST') {
+      let removed = 0, skipped = 0;
+      for (const id of await fsp.readdir(JOBS)) {
+        const job = await readJob(id);
+        if (!job?.deleted) continue;
+        // No borrar una carpeta que el worker todavía pueda estar usando.
+        if (!['listo', 'error'].includes(job.status)) { skipped++; continue; }
+        await fsp.rm(path.join(JOBS, id), { recursive: true, force: true });
+        removed++;
+      }
+      return send(res, 200, { ok: true, removed, skipped });
+    }
     m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope|review|edit|approve|state|music))?$/);
     if (m) {
       const [, id, sub] = m;

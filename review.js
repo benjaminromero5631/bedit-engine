@@ -14,6 +14,10 @@ button.pri{background:var(--ac);color:#06210f;border-color:var(--ac);font-weight
 button:disabled{opacity:.4;cursor:default}
 main{max-width:1000px;margin:0 auto;padding:16px}
 .list{display:grid;gap:8px}
+.list-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.list-tools .tabs{margin:0}
+.clear-deleted{border-color:var(--usr);color:#fda4af}
+.clear-deleted:hover{background:#351b23}
 .item{display:flex;justify-content:space-between;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer}
 .item-info{min-width:0;overflow-wrap:anywhere}
 .item-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
@@ -85,7 +89,7 @@ button.dng{color:var(--usr)}
 var TOKEN = '';
 try { TOKEN = localStorage.getItem('bedit_token') || ''; } catch (e) {}
 var app = document.getElementById('app');
-var cur = null, removed = {}, restored = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [];
+var cur = null, removed = {}, restored = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [], listNotice = '';
 var tlPxPerSec = 0, tlDur = 0, tlKeep = [];
 
 function api(path, opts) {
@@ -132,8 +136,12 @@ function drawList() {
   var counts = { pendiente: 0, aprobado: 0, eliminado: 0 };
   lastJobs.forEach(function (j) { counts[stateOf(j)]++; });
   var names = { pendiente: 'Pendientes', aprobado: 'Aprobados', eliminado: 'Eliminados' };
-  var h = '<div class="tabs">';
+  var h = '';
+  if (listNotice) { h += '<p class="msg">' + esc(listNotice) + '</p>'; listNotice = ''; }
+  h += '<div class="list-tools"><div class="tabs">';
   ['pendiente', 'aprobado', 'eliminado'].forEach(function (k) { h += '<button data-tab="' + k + '"' + (tab === k ? ' class="on"' : '') + '>' + names[k] + ' (' + counts[k] + ')</button>'; });
+  h += '</div>';
+  if (tab === 'eliminado') h += '<button id="clearDeleted" class="clear-deleted">Limpiar historial</button>';
   h += '</div>';
   var rows = lastJobs.filter(function (j) { return stateOf(j) === tab; });
   if (!rows.length) h += '<p class="msg">No hay videos aquí.</p>';
@@ -151,6 +159,15 @@ function drawList() {
   Array.prototype.forEach.call(app.querySelectorAll('.tabs button'), function (el) { el.onclick = function () { tab = el.getAttribute('data-tab'); drawList(); }; });
   Array.prototype.forEach.call(app.querySelectorAll('.item'), function (el) { el.onclick = function () { openJob(el.getAttribute('data-id')); }; });
   Array.prototype.forEach.call(app.querySelectorAll('.item .download'), function (el) { el.onclick = function (event) { event.stopPropagation(); }; });
+  var clear = document.getElementById('clearDeleted');
+  if (clear) clear.onclick = function () {
+    if (!confirm('¿Eliminar definitivamente el historial de videos en Eliminados? Esto borra sus archivos y no se puede deshacer. Los videos pendientes y aprobados no se tocarán.')) return;
+    clear.disabled = true; clear.textContent = 'Limpiando…';
+    api('/jobs/clear-deleted', { method: 'POST' }).then(function (result) {
+      listNotice = 'Historial limpiado: ' + result.removed + ' video(s) eliminados.' + (result.skipped ? ' ' + result.skipped + ' en procesamiento se conservaron por ahora.' : '');
+      showList();
+    }).catch(function (e) { listNotice = 'No se pudo limpiar el historial: ' + e.message; showList(); });
+  };
 }
 
 function openJob(id) {

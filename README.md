@@ -94,6 +94,11 @@ Todas con `Authorization: Bearer <BEDIT_TOKEN>` (salvo `/health`).
 | `GET /jobs/:id/project` | `project.json`: frases, cortes y zooms (para revisar). |
 | `POST /jobs/:id/rerender` (cuerpo: project.json editado) | Vuelve a renderizar con tus correcciones, sin re-transcribir. |
 | `GET/POST /music`, `DELETE /music/:nombre` | Música. |
+| `GET/POST /broll`, `DELETE /broll/:id`, `GET /broll/:id/file` | Biblioteca privada de clips B-roll y previsualización. |
+
+### B-roll
+
+La biblioteca guarda clips propios en `/data/broll`. La subida acepta MP4, MOV y WebM de hasta 150 MB y 15 segundos; el motor los convierte a MP4 vertical 540×960 sin audio para previsualizar y renderizar de forma consistente. Añade etiquetas separadas por coma (por ejemplo `trabajo, negocio, IA, miedo`). B Edit solo propone coincidencias de palabras y etiquetas; nunca añade clips automáticamente. Cada video admite hasta tres inserciones aprobadas de 1–2 segundos. El B-roll cubre la imagen, mientras la mezcla de voz y música del render queda intacta.
 
 `options`: `{"sensitivity":"suave|normal|fuerte","seed":1,"music":false,"musicName":"x.mp3"}`.
 

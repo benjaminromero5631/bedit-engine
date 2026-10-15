@@ -4,6 +4,7 @@ import { probe, extractAudio16k } from './media.js';
 import { transcribe } from './transcribe.js';
 import { makePlan, replan, editPlan } from './core/plan.js';
 import { renderVideo } from './render.js';
+import { brollFile } from './broll.js';
 
 const round = (x) => Math.round(x * 1000) / 1000;
 
@@ -19,7 +20,7 @@ export async function processJob({ dir, input, options = {}, music, setStatus })
   const plan = makePlan({ audio16k: audio, chunks, duration: info.duration, sensitivity: options.sensitivity || 'normal', seed: options.seed || 1 });
   const project = {
     version: 1, info, options, createdAt: new Date().toISOString(),
-    words: plan.words, fillers: plan.fillers, phrases: plan.phrases, cuts: plan.cuts, zoomEvents: plan.zoomEvents, seed: plan.seed,
+    words: plan.words, fillers: plan.fillers, phrases: plan.phrases, cuts: plan.cuts, zoomEvents: plan.zoomEvents, seed: plan.seed, brollEvents: [],
   };
   await fs.writeFile(path.join(dir, 'project.json'), JSON.stringify(project, (k, v) => (typeof v === 'number' ? round(v) : v), 1));
   setStatus('renderizando', 0.1);
@@ -34,12 +35,18 @@ export async function rerenderJob({ dir, input, project, music, setStatus }) {
   const plan = replan({ phrases: project.phrases, words: project.words, fillers: project.fillers, cuts: project.cuts, duration: info.duration, seed: project.seed || 1, zoomEvents: project.zoomEvents || null });
   const merged = { ...project, phrases: plan.phrases, zoomEvents: plan.zoomEvents };
   await fs.writeFile(path.join(dir, 'project.json'), JSON.stringify(merged, (k, v) => (typeof v === 'number' ? round(v) : v), 1));
-  const stats = await renderVideo({ dir, input, info, plan, music, onProgress: (p) => setStatus('renderizando', 0.02 + 0.98 * p) });
+  const brollEvents = [];
+  for (const event of project.brollEvents || []) {
+    const file = await brollFile(event.clipId);
+    if (!file) throw new Error('No se encontró un clip B-roll aprobado');
+    brollEvents.push({ ...event, file });
+  }
+  const stats = await renderVideo({ dir, input, info, plan, music, brollEvents, onProgress: (p) => setStatus('renderizando', 0.02 + 0.98 * p) });
   return { ...stats, phrases: plan.phrases.length, cuts: plan.cuts.length, zooms: plan.zoomEvents.length, musicName: music?.name || null };
 }
 
 /** Aplica lo que Benjamin cambió en la revisión (palabras quitadas/recuperadas, texto, tiempo de palabras, cortes manuales en la línea de tiempo) y devuelve el project.json nuevo (sin renderizar). */
-export async function editJob({ dir, project, removed, restored = new Set(), edits = {}, times = {}, manualCuts = [] }) {
+export async function editJob({ dir, project, removed, restored = new Set(), edits = {}, times = {}, manualCuts = [], brollEvents = [] }) {
   const buf = await fs.readFile(path.join(dir, 'audio16k.wav'));
   const at = buf.indexOf('data');
   const pcm = buf.subarray(at + 8);
@@ -50,5 +57,5 @@ export async function editJob({ dir, project, removed, restored = new Set(), edi
     audio16k: audio, words: project.words, fillers: project.fillers || [], duration: project.info.duration,
     sensitivity: project.options?.sensitivity || 'normal', seed: project.seed || 1, removed: new Set(removed), restored: new Set(restored), edits, times, manualCuts,
   });
-  return { ...project, words: plan.words, phrases: plan.phrases, cuts: plan.cuts, zoomEvents: plan.zoomEvents, manualCuts: plan.manualCuts };
+  return { ...project, words: plan.words, phrases: plan.phrases, cuts: plan.cuts, zoomEvents: plan.zoomEvents, manualCuts: plan.manualCuts, brollEvents };
 }

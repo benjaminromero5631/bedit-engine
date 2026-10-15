@@ -75,6 +75,20 @@ button.dng{color:var(--usr)}
 .tl-row button{padding:3px 8px;font-size:13px}
 .tl-row span.t{color:var(--mut)}
 .music{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+.broll{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+.broll-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-top:10px}
+.broll-card{background:#1c1f25;border:1px solid var(--line);border-radius:10px;padding:10px;min-width:0}
+.broll-card video{width:100%;height:180px;object-fit:cover;background:#000;border-radius:8px}
+#previewWrap{position:relative}#brollPreview{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;pointer-events:none;background:#000}
+.broll-card .controls{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.broll>.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.broll-card input,.broll-card select,.library-form input{min-width:0;background:#101216;color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit}
+.broll-card input[type=number]{width:90px}
+.library-form{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.library-form input{flex:1;min-width:180px}
+.library-card{display:grid;grid-template-columns:150px 1fr auto;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;margin:8px 0}
+.library-card video{width:150px;height:100px;object-fit:cover}
+@media(max-width:550px){.library-card{grid-template-columns:1fr}.library-card video{width:100%;height:180px}}
 .music .mhead{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .mlist{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .mtrk{display:flex;align-items:center;gap:6px;background:#1c1f25;border:1px solid var(--line);border-radius:99px;padding:6px 10px;font-size:13px;cursor:pointer}
@@ -84,13 +98,13 @@ button.dng{color:var(--usr)}
 .mtrk .x{color:var(--mut);cursor:pointer}
 .mtrk .x:hover{color:var(--usr)}
 </style></head><body>
-<header><h1>B Edit · Revisión</h1><button id="refresh">Actualizar</button><button id="tok">Token</button></header>
+<header><h1>B Edit · Revisión</h1><button id="library">Biblioteca B-roll</button><button id="refresh">Actualizar</button><button id="tok">Token</button></header>
 <main id="app"></main>
 <script>
 var TOKEN = '';
 try { TOKEN = localStorage.getItem('bedit_token') || ''; } catch (e) {}
 var app = document.getElementById('app');
-var cur = null, removed = {}, restored = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [], listNotice = '';
+var cur = null, removed = {}, restored = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [], listNotice = '', brollClips = [], brollSuggestions = [], brollEvents = [], brollPreviewEvent = null;
 var tlPxPerSec = 0, tlDur = 0, tlKeep = [];
 
 function api(path, opts) {
@@ -132,6 +146,29 @@ function showList() {
       } else app.innerHTML = '<p class="msg">No se pudieron cargar los videos: ' + esc(e.message) + ' <button id="retry">Reintentar</button></p>';
       var retry = document.getElementById('retry'); if (retry) retry.onclick = showList;
     });
+}
+function showLibrary() {
+  cur = null; clearInterval(poll);
+  app.innerHTML = '<div class="top"><button id="libraryBack">← Videos</button><b>Biblioteca B-roll</b></div><p class="legend">Sube clips tuyos de apoyo, idealmente verticales y de 1–3 segundos. Se normalizan a MP4 para que el navegador pueda previsualizarlos. Las etiquetas ayudan a proponer momentos; cada inserción requiere tu aprobación.</p><form id="brollUpload" class="library-form"><input id="brollFile" type="file" accept="video/mp4,video/quicktime,video/webm,.mov,.mp4,.webm" required><input id="brollName" maxlength="80" placeholder="Nombre: escribiendo en computador"><input id="brollTags" maxlength="200" placeholder="Etiquetas separadas por coma: trabajo, negocio"><button class="pri">Subir clip</button></form><div id="brollLibrary"><p class="msg">Cargando biblioteca…</p></div>';
+  document.getElementById('libraryBack').onclick = showList;
+  document.getElementById('brollUpload').onsubmit = function (ev) {
+    ev.preventDefault();
+    var file = document.getElementById('brollFile').files[0]; if (!file) return;
+    var fd = new FormData(); fd.append('file', file); fd.append('name', document.getElementById('brollName').value || file.name); fd.append('tags', document.getElementById('brollTags').value);
+    var btn = ev.currentTarget.querySelector('button'); btn.disabled = true; btn.textContent = 'Subiendo y preparando…';
+    fetch('/broll', { method: 'POST', headers: { Authorization: 'Bearer ' + TOKEN }, body: fd }).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); })
+      .then(function () { showLibrary(); }).catch(function (e) { alert('No se pudo subir: ' + e.message); btn.disabled = false; btn.textContent = 'Subir clip'; });
+  };
+  loadBrollLibrary();
+}
+function loadBrollLibrary() {
+  var box = document.getElementById('brollLibrary'); if (!box) return;
+  api('/broll').then(function (d) {
+    brollClips = d.clips || [];
+    if (!brollClips.length) { box.innerHTML = '<p class="msg">Todavía no hay clips. Empieza con tomas cotidianas de trabajo, negocio, IA o situaciones relacionadas con miedo y decisiones.</p>'; return; }
+    box.innerHTML = brollClips.map(function (c) { return '<div class="library-card"><video muted playsinline controls src="/broll/' + c.id + '/file?t=' + encodeURIComponent(TOKEN) + '"></video><div><b>' + esc(c.name) + '</b><div class="legend">' + (c.duration || 0).toFixed(1) + ' s · ' + esc((c.tags || []).join(', ') || 'sin etiquetas') + '</div></div><button data-broll-del="' + c.id + '" class="dng">Eliminar</button></div>'; }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('[data-broll-del]'), function (btn) { btn.onclick = function () { var id = btn.getAttribute('data-broll-del'); if (!confirm('¿Eliminar este clip de la biblioteca? B Edit lo rechazará si todavía está aplicado a una edición.')) return; api('/broll/' + id, { method: 'DELETE' }).then(loadBrollLibrary).catch(function (e) { alert(e.message); }); }; });
+  }).catch(function (e) { box.innerHTML = '<p class="msg">No se pudo cargar la biblioteca: ' + esc(e.message) + '</p>'; });
 }
 function drawList() {
   var counts = { pendiente: 0, aprobado: 0, publicado: 0, eliminado: 0 };
@@ -179,6 +216,10 @@ function openJob(id) {
 }
 
 function render(d) {
+  brollPreviewEvent = null;
+  brollClips = d.brollClips || [];
+  brollSuggestions = d.brollSuggestions || [];
+  brollEvents = (d.brollEvents || []).map(function (e) { return { clipId: e.clipId, at: e.at, sourceAt: e.sourceAt, duration: e.duration }; });
   words = d.words;
   words.forEach(function (w) { if (w.i >= 0 && w.x) removed[w.i] = true; if (w.i >= 0 && w.k) restored[w.i] = true; });
   var busy = d.status !== 'listo';
@@ -191,7 +232,7 @@ function render(d) {
   }
   if (d.status === 'error') h += '<p class="msg">Hubo un error: ' + esc(d.error || '') + '</p>';
   var st = d.deleted ? 'eliminado' : (d.published ? 'publicado' : (d.approved ? 'aprobado' : 'pendiente'));
-  h += '<div class="detail"><div><video id="v" controls playsinline src="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '&v=' + Date.now() + '"></video></div><div>';
+  h += '<div class="detail"><div id="previewWrap"><video id="v" controls playsinline src="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '&v=' + Date.now() + '"></video><video id="brollPreview" muted playsinline></video></div><div>';
   if (['aprobado', 'publicado'].includes(st) && d.status === 'listo') { h += '<a class="download" href="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '">⬇ Descargar video</a> '; h += '<button class="gallery-save" id="gallerySave">📱 Guardar en galería</button>'; h += '<p class="legend">En el teléfono se abrirá el menú del sistema para elegir “Guardar video” o Fotos. El navegador requiere esa confirmación.</p>'; }
   if (d.editable) {
     h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button><button id="m3">Mover tiempo</button></div>';
@@ -201,6 +242,7 @@ function render(d) {
   } else {
     h += '<p class="msg">Este video es de una versión anterior: se puede ver y aprobar, pero no editar palabras.</p>';
   }
+  if (d.editable) h += '<section class="broll"><b>🎬 B-roll sugerido</b><p class="legend">Propuestas por coincidencia de etiquetas y palabras; no se agregan solas. El clip reemplaza la imagen por 1 segundo (máximo 2), manteniendo tu voz y música. Añade, cambia o quita clips y luego pulsa “Aplicar cambios”.</p><div id="brollBox"></div></section>';
   h += '<div class="music"><div class="mhead"><b>🎵 Música</b><button id="mUp">Subir canción</button></div>' +
     '<input type="file" id="mFile" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.flac,video/mp4,video/quicktime,.mov" style="display:none">' +
     '<div class="legend" style="margin:6px 0 0">Click en una pista para aplicarla al toque (queda de fondo, bajo volumen, sin tapar tu voz). Dale play al video para escucharla ya mezclada. ★ = predeterminada para videos nuevos.</div>' +
@@ -214,6 +256,8 @@ function render(d) {
   h += '<span class="msg" id="info"></span></div></div></div>';
   app.innerHTML = h;
   document.getElementById('back').onclick = showList;
+  drawBrollSection();
+  wireBrollPreview();
   if (d.editable) {
     drawWords(true); setMode(mode);
     document.getElementById('m1').onclick = function () { setMode('quitar'); };
@@ -243,6 +287,58 @@ function render(d) {
   if (gallery) gallery.onclick = function () { saveToGallery(cur, gallery); };
   if (dl) dl.onclick = function () { if (confirm('¿Mandar este video a Eliminados?')) setState('eliminado'); };
   if (rs) rs.onclick = function () { setState('pendiente'); };
+}
+
+function drawBrollSection() {
+  var box = document.getElementById('brollBox'); if (!box) return;
+  var h = '';
+  if (!brollClips.length) h += '<p class="msg">Aún no hay clips en la biblioteca. <button id="openBrollLibrary">Abrir biblioteca</button></p>';
+  else h += '<div class="controls"><select id="brollManualSelect" aria-label="Elegir B-roll"><option value="">Elegir un clip…</option>' + brollClips.map(function (c) { return '<option value="' + c.id + '">' + esc(c.name) + '</option>'; }).join('') + '</select><button id="brollAtCursor"' + (brollEvents.length >= 3 ? ' disabled' : '') + '>Añadir en el cursor · 1 s</button></div><div class="legend">También puedes colocar manualmente un clip en la posición actual del video.</div>';
+  if (brollSuggestions.length) {
+    h += '<b>Propuestas para este video</b><div class="broll-grid">';
+    brollSuggestions.forEach(function (s, i) {
+      var already = brollEvents.some(function (e) { return e.clipId === s.clipId && Math.abs(e.at - s.at) < 0.1; });
+      h += '<div class="broll-card"><video muted playsinline controls preload="metadata" src="/broll/' + s.clipId + '/file?t=' + encodeURIComponent(TOKEN) + '"></video><div><b>' + esc(s.clipName) + '</b><div class="legend">Sugerido en ' + s.at.toFixed(1) + ' s · ' + esc(s.reason) + '</div></div><div class="controls"><button data-broll-preview="' + i + '">Ver en el momento</button><button class="pri" data-broll-add="' + i + '"' + (already || brollEvents.length >= 3 ? ' disabled' : '') + '>Añadir propuesta · 1 s</button></div></div>';
+    });
+    h += '</div>';
+  } else if (brollClips.length) h += '<p class="msg">No encontré coincidencias claras entre las etiquetas de tu biblioteca y el guion. No propongo clips para este video.</p>';
+  h += '<div style="margin-top:12px"><b>Clips elegidos (' + brollEvents.length + '/3)</b>';
+  if (brollEvents.length) {
+    h += '<div class="broll-grid">';
+    brollEvents.forEach(function (e, i) {
+      var options = brollClips.map(function (c) { return '<option value="' + c.id + '"' + (c.id === e.clipId ? ' selected' : '') + '>' + esc(c.name) + '</option>'; }).join('');
+      var clip = brollClips.find(function (c) { return c.id === e.clipId; });
+      h += '<div class="broll-card">' + (clip ? '<video muted playsinline controls preload="metadata" src="/broll/' + clip.id + '/file?t=' + encodeURIComponent(TOKEN) + '"></video>' : '<p class="msg">Clip ya no disponible</p>') + '<div class="controls"><select data-broll-clip="' + i + '" aria-label="Elegir clip">' + options + '</select><label>En <input type="number" min="0" step="0.03" value="' + e.at.toFixed(2) + '" data-broll-at="' + i + '"> s</label><label><select data-broll-duration="' + i + '" aria-label="Duración"><option value="1"' + (e.duration === 1 ? ' selected' : '') + '>1 s</option><option value="1.5"' + (e.duration === 1.5 ? ' selected' : '') + '>1,5 s</option><option value="2"' + (e.duration === 2 ? ' selected' : '') + '>2 s</option></select></label><button class="dng" data-broll-remove="' + i + '">Quitar</button></div></div>';
+    });
+    h += '</div>';
+  } else h += '<p class="msg">Ninguna propuesta seleccionada. Si no hay una relación clara, déjalo así.</p>';
+  h += '</div>';
+  box.innerHTML = h;
+  var libraryBtn = document.getElementById('openBrollLibrary'); if (libraryBtn) libraryBtn.onclick = showLibrary;
+  var manualSelect = document.getElementById('brollManualSelect'), atCursor = document.getElementById('brollAtCursor');
+  if (atCursor) atCursor.onclick = function () { var v = document.getElementById('v'), clipId = manualSelect.value; if (!clipId || !v) { alert('Elige un clip y coloca el cursor del video en el momento deseado.'); return; } if (brollEvents.length >= 3) return; var at = Math.min(v.currentTime, Math.max(0, v.duration - 1)); if (brollEvents.some(function (e) { return at < e.at + e.duration && at + 1 > e.at; })) { alert('Ese momento se cruza con otro B-roll; mueve el cursor a un espacio libre.'); return; } brollEvents.push({ clipId: clipId, at: Math.round(at * 30) / 30, sourceAt: sourceAtOutput(at), duration: 1 }); brollEvents.sort(function (a, b) { return a.at - b.at; }); dirty = true; refreshInfo(); drawBrollSection(); };
+  Array.prototype.forEach.call(box.querySelectorAll('[data-broll-preview]'), function (btn) { btn.onclick = function () { var s = brollSuggestions[Number(btn.getAttribute('data-broll-preview'))], v = document.getElementById('v'); if (!s || !v) return; brollPreviewEvent = { clipId: s.clipId, at: s.at, duration: 1 }; v.currentTime = s.at; v.play().catch(function () {}); syncBrollPreview(); }; });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-broll-add]'), function (btn) { btn.onclick = function () { var s = brollSuggestions[Number(btn.getAttribute('data-broll-add'))]; if (!s || brollEvents.length >= 3) return; brollEvents.push({ clipId: s.clipId, at: Math.round(s.at * 30) / 30, sourceAt: s.sourceAt, duration: 1 }); brollEvents.sort(function (a, b) { return a.at - b.at; }); dirty = true; refreshInfo(); drawBrollSection(); }; });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-broll-remove]'), function (btn) { btn.onclick = function () { brollEvents.splice(Number(btn.getAttribute('data-broll-remove')), 1); dirty = true; refreshInfo(); drawBrollSection(); }; });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-broll-clip]'), function (el) { el.onchange = function () { brollEvents[Number(el.getAttribute('data-broll-clip'))].clipId = el.value; dirty = true; refreshInfo(); }; });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-broll-at]'), function (el) { el.onchange = function () { var i = Number(el.getAttribute('data-broll-at')); brollEvents[i].at = Math.max(0, Number(el.value) || 0); brollEvents[i].sourceAt = sourceAtOutput(brollEvents[i].at); dirty = true; refreshInfo(); }; });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-broll-duration]'), function (el) { el.onchange = function () { brollEvents[Number(el.getAttribute('data-broll-duration'))].duration = Number(el.value); dirty = true; refreshInfo(); }; });
+}
+
+function wireBrollPreview() {
+  var v = document.getElementById('v'); if (!v) return;
+  ['timeupdate', 'play', 'pause', 'seeked'].forEach(function (name) { v.addEventListener(name, syncBrollPreview); });
+}
+function syncBrollPreview() {
+  var v = document.getElementById('v'), overlay = document.getElementById('brollPreview'); if (!v || !overlay) return;
+  var t = v.currentTime, event = brollPreviewEvent && t >= brollPreviewEvent.at && t < brollPreviewEvent.at + brollPreviewEvent.duration ? brollPreviewEvent : brollEvents.find(function (e) { return t >= e.at && t < e.at + e.duration; });
+  if (!event) { overlay.pause(); overlay.style.display = 'none'; return; }
+  var src = '/broll/' + event.clipId + '/file?t=' + encodeURIComponent(TOKEN);
+  if (overlay.dataset.clip !== event.clipId) { overlay.dataset.clip = event.clipId; overlay.src = src; }
+  overlay.style.display = 'block';
+  var offset = t - event.at;
+  if (overlay.readyState >= 1 && Math.abs(overlay.currentTime - offset) > 0.12) { try { overlay.currentTime = offset; } catch (e) {} }
+  if (!v.paused && overlay.paused) overlay.play().catch(function () {}); else if (v.paused && !overlay.paused) overlay.pause();
 }
 
 function setMode(m) {
@@ -552,10 +648,11 @@ function apply() {
   if (hitCount && !confirm('Los cortes seleccionados eliminarán ' + hitCount + ' palabra' + (hitCount === 1 ? '' : 's') + ' hablada' + (hitCount === 1 ? '' : 's') + '. ¿Aplicar de todos modos?')) return;
   var btn = document.getElementById('apply'); btn.disabled = true;
   document.getElementById('info').textContent = 'Enviando…';
-  api('/jobs/' + cur + '/edit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ removed: Object.keys(removed).map(Number), restored: Object.keys(restored).map(Number), edits: edits, times: times, manualCuts: manualCuts }) })
+  api('/jobs/' + cur + '/edit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ removed: Object.keys(removed).map(Number), restored: Object.keys(restored).map(Number), edits: edits, times: times, manualCuts: manualCuts, brollEvents: brollEvents }) })
     .then(function () { openJob(cur); })
     .catch(function (e) { document.getElementById('info').textContent = 'Error: ' + e.message; btn.disabled = false; });
 }
+document.getElementById('library').onclick = showLibrary;
 document.getElementById('refresh').onclick = function () { cur ? openJob(cur) : showList(); };
 document.getElementById('tok').onclick = function () { showTokenForm(''); };
 showList();

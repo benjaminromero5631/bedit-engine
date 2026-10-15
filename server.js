@@ -1,7 +1,7 @@
 import { keepFromCuts, frameDb } from './core/cuts.js';
 import { editJob } from './pipeline.js';
 import { applyMusicOnly, quantizeKeep } from './render.js';
-import { run } from './media.js';
+import { probe, run } from './media.js';
 import { REVIEW_HTML } from './review.js';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -9,7 +9,8 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import Busboy from 'busboy';
-import { initDirs, createJob, updateJob, enqueue, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, JOBS, MUSIC } from './jobs.js';
+import { initDirs, createJob, updateJob, enqueue, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, JOBS, MUSIC, BROLL } from './jobs.js';
+import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
@@ -31,9 +32,9 @@ const readBody = (req, max = 20e6) => new Promise((resolve, reject) => {
 });
 
 /** Recibe un multipart: guarda el archivo del campo `field` en `target` y devuelve los demás campos. */
-function receiveFile(req, target, field) {
+function receiveFile(req, target, field, maxFileSize = 3e9) {
   return new Promise((resolve, reject) => {
-    const bb = Busboy({ headers: req.headers, limits: { fileSize: 3e9, files: 1 } });
+    const bb = Busboy({ headers: req.headers, limits: { fileSize: maxFileSize, files: 1 } });
     const fields = {}; let pending = null; let filename = null; let tooBig = false;
     bb.on('field', (k, v) => { fields[k] = v; });
     bb.on('file', (name, stream, info) => {
@@ -53,11 +54,11 @@ function receiveFile(req, target, field) {
   });
 }
 
-function streamFile(req, res, file, type, name) {
+function streamFile(req, res, file, type, name, disposition = 'attachment') {
   let st;
   try { st = fs.statSync(file); } catch { return send(res, 404, { error: 'No existe' }); }
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
-  const head = { 'content-type': type, 'accept-ranges': 'bytes', 'content-disposition': `attachment; filename="${name}"` };
+  const head = { 'content-type': type, 'accept-ranges': 'bytes', 'content-disposition': `${disposition}; filename="${name}"` };
   if (range) {
     const a = range[1] ? Number(range[1]) : 0, b = range[2] ? Math.min(Number(range[2]), st.size - 1) : st.size - 1;
     res.writeHead(206, { ...head, 'content-range': `bytes ${a}-${b}/${st.size}`, 'content-length': b - a + 1 });
@@ -86,6 +87,48 @@ const server = http.createServer(async (req, res) => {
     if (!authed(req)) return send(res, 401, { error: 'No autorizado' });
 
     // ── música ──
+    // ── biblioteca B-roll ──
+    if (p === '/broll' && req.method === 'GET') return send(res, 200, { clips: await listBroll() });
+    if (p === '/broll' && req.method === 'POST') {
+      const tmp = path.join(BROLL, `.upload-${crypto.randomBytes(6).toString('hex')}`);
+      let uploaded, converted;
+      try {
+        uploaded = await receiveFile(req, tmp, 'file', 150 * 1024 * 1024);
+        const sourceName = uploaded.filename || '';
+        if (!/\.(mp4|mov|m4v|webm)$/i.test(sourceName)) throw new Error('Sube un video MP4, MOV o WebM');
+        const info = await probe(tmp);
+        if (!info.hasVideo || info.duration < 0.4 || info.duration > 15) throw new Error('El clip debe durar entre 0,4 y 15 segundos');
+        const id = crypto.randomBytes(8).toString('hex');
+        converted = path.join(BROLL, 'clips', `${id}.mp4`);
+        await run('ffmpeg', ['-y', '-v', 'error', '-i', tmp, '-an', '-vf', 'scale=540:960:force_original_aspect_ratio=increase,crop=540:960,setsar=1,fps=30', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', converted]);
+        const tags = String(uploaded.fields.tags || '').split(',').map((x) => x.trim()).filter(Boolean);
+        const saved = await addBroll({ name: (uploaded.fields.name || sourceName).replace(/\.[^.]+$/, ''), tags, filename: converted, duration: info.duration });
+        await fsp.rm(tmp, { force: true });
+        return send(res, 201, { ok: true, clip: { ...saved, duration: info.duration } });
+      } catch (e) {
+        await fsp.rm(tmp, { force: true });
+        if (converted) await fsp.rm(converted, { force: true });
+        return send(res, 400, { error: e.message });
+      }
+    }
+    let bm = p.match(/^\/broll\/([a-f0-9]{16})(?:\/(file))?$/);
+    if (bm && bm[2] === 'file' && req.method === 'GET') {
+      const file = await brollFile(bm[1]);
+      if (!file) return send(res, 404, { error: 'No existe ese clip B-roll' });
+      return streamFile(req, res, file, 'video/mp4', `${bm[1]}.mp4`, 'inline');
+    }
+    if (bm && !bm[2] && req.method === 'DELETE') {
+      for (const jobId of await fsp.readdir(JOBS)) {
+        for (const fileName of ['project.json', 'project_in.json']) {
+          let project;
+          try { project = JSON.parse(await fsp.readFile(path.join(JOBS, jobId, fileName), 'utf8')); } catch { continue; }
+          if ((project.brollEvents || []).some((event) => event.clipId === bm[1])) return send(res, 409, { error: 'Este clip está aplicado o en proceso de render. Quítalo de la edición antes de borrarlo de la biblioteca.' });
+        }
+      }
+      const deleted = await deleteBroll(bm[1]);
+      return send(res, deleted ? 200 : 404, deleted ? { ok: true } : { error: 'No existe ese clip' });
+    }
+
     if (p === '/music' && req.method === 'GET') return send(res, 200, { tracks: await listMusic(), default: await getDefaultMusic() });
     if (p === '/music' && req.method === 'POST') {
       const tmp = path.join(MUSIC, `.up-${crypto.randomBytes(4).toString('hex')}`);
@@ -171,7 +214,7 @@ const server = http.createServer(async (req, res) => {
         let project = null;
         try { project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8')); } catch {}
         const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, published: !!pub.published, deleted: !!pub.deleted, editable: false, words: [], duration: 0, manualCuts: [],
-          musicOff: pub.options?.music === false, musicName: pub.options?.musicName ?? (pub.stats?.musicName ?? null) };
+          musicOff: pub.options?.music === false, musicName: pub.options?.musicName ?? (pub.stats?.musicName ?? null), brollEvents: [], brollClips: [], brollSuggestions: [] };
         if (project) {
           out.duration = project.info.duration;
           out.manualCuts = project.manualCuts || [];
@@ -181,6 +224,9 @@ const server = http.createServer(async (req, res) => {
           out.cuts = project.cuts || [];
           out.keep = keep;
           out.outputDuration = keep.reduce((sum, k) => sum + k.e - k.s, 0);
+          out.brollEvents = project.brollEvents || [];
+          out.brollClips = await listBroll();
+          out.brollSuggestions = suggestBroll(project.words || [], out.brollClips, keep, 3);
           const mapWord = (w) => {
             const parts = keep.map((k) => ({ k, s: Math.max(w.start, k.s), e: Math.min(w.end, k.e) }))
               .filter((x) => x.e - x.s > 0.005);
@@ -228,7 +274,30 @@ const server = http.createServer(async (req, res) => {
             manualCuts.push({ s: Math.max(0, Number(c.s)), e: Math.min(project.info.duration, Number(c.e)) });
           }
         }
-        const next = await editJob({ dir, project, removed, restored, edits, times, manualCuts });
+        const brollEvents = [];
+        if (Array.isArray(body.brollEvents)) {
+          if (body.brollEvents.length > 3) return send(res, 400, { error: 'Puedes usar como máximo 3 clips B-roll por reel' });
+          const outDur = (project.cuts || []).length ? quantizeKeep(keepFromCuts(project.cuts, project.info.duration).keep, project.info.duration).frames / 30 : project.info.duration;
+          for (const event of body.brollEvents) {
+            if (!event || typeof event.clipId !== 'string' || !Number.isFinite(event.at) || !Number.isFinite(event.duration) || event.duration < 1 || event.duration > 2 || event.at < 0 || (event.sourceAt == null && event.at + event.duration > outDur) || (event.sourceAt != null && (!Number.isFinite(event.sourceAt) || event.sourceAt < 0 || event.sourceAt >= project.info.duration))) return send(res, 400, { error: 'Cada B-roll debe durar 1–2 segundos y quedar dentro del video final' });
+            if (!await brollFile(event.clipId)) return send(res, 400, { error: 'Uno de los clips B-roll ya no está en la biblioteca' });
+            brollEvents.push({ clipId: event.clipId, at: Math.round(event.at * 30) / 30, sourceAt: event.sourceAt == null ? null : Math.round(event.sourceAt * 30) / 30, duration: Math.round(event.duration * 30) / 30 });
+          }
+        }
+        const next = await editJob({ dir, project, removed, restored, edits, times, manualCuts, brollEvents });
+        if (brollEvents.length) {
+          const { keep: rawKeep } = keepFromCuts(next.cuts || [], project.info.duration);
+          const nextKeep = quantizeKeep(rawKeep, project.info.duration).keep;
+          for (const event of next.brollEvents) {
+            if (event.sourceAt == null) continue;
+            const segment = nextKeep.find((k) => event.sourceAt >= k.s && event.sourceAt < k.e);
+            if (!segment) return send(res, 400, { error: 'Un B-roll quedó dentro de un tramo eliminado; mueve su punto en el clip fuente antes de aplicar' });
+            event.at = Math.round((segment.o + event.sourceAt - segment.s) * 30) / 30;
+            if (event.at + event.duration > nextKeep.reduce((sum, k) => sum + k.e - k.s, 0)) return send(res, 400, { error: 'Un B-roll quedó demasiado cerca del final después de los cortes' });
+          }
+          next.brollEvents.sort((a, b) => a.at - b.at);
+          for (let i = 1; i < next.brollEvents.length; i++) if (next.brollEvents[i].at < next.brollEvents[i - 1].at + next.brollEvents[i - 1].duration) return send(res, 400, { error: 'Los B-roll se superponen después de los cortes; ajusta los momentos y vuelve a aplicar' });
+        }
         await updateJob(id, { approved: false, published: false });
         await enqueue(id, 'rerender', next);
         return send(res, 202, { id, status: 'en cola' });

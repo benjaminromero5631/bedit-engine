@@ -7,10 +7,11 @@ import { processJob, rerenderJob } from './pipeline.js';
 export const DATA = process.env.DATA_DIR || '/data';
 export const JOBS = path.join(DATA, 'jobs');
 export const MUSIC = path.join(DATA, 'music');
+export const BROLL = path.join(DATA, 'broll');
 const STATE = path.join(DATA, 'state.json');
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 7);
 
-export async function initDirs() { await fs.mkdir(JOBS, { recursive: true }); await fs.mkdir(MUSIC, { recursive: true }); }
+export async function initDirs() { await fs.mkdir(JOBS, { recursive: true }); await fs.mkdir(MUSIC, { recursive: true }); await fs.mkdir(path.join(BROLL, 'clips'), { recursive: true }); }
 
 const queue = [];
 let running = false;

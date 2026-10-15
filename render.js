@@ -29,7 +29,6 @@ export function quantizeKeep(keep, duration) {
   for (const s of segs) { s.of = o; o += s.ef - s.sf; }
   return { segs, frames: o, keep: segs.map((s) => ({ s: s.sf / FPS, e: s.ef / FPS, o: s.of / FPS })) };
 }
-
 function zoomExpr(events) {
   if (!events.length) return '1';
   const terms = events.map((e) => {
@@ -41,7 +40,7 @@ function zoomExpr(events) {
   return `(1+${terms.join('+')})`;
 }
 
-function videoGraph(info, q, zooms) {
+function videoGraph(info, q, zooms, brollEvents = [], firstBrollInput = 4) {
   const base = Math.max(W / info.width, H / info.height);
   const W0 = info.width * base, H0 = info.height * base;
   const z = zoomExpr(zooms);
@@ -50,12 +49,22 @@ function videoGraph(info, q, zooms) {
   const tm = hdr
     ? ',zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p'
     : '';
-  return [
+  const graph = [
     `[0:v]setpts=PTS-STARTPTS,fps=${FPS},select='${sel}',setpts=N/(${FPS}*TB),`
     + `scale=w='trunc(${f4(W0)}*${z}/2)*2':h='trunc(${f4(H0)}*${z}/2)*2':eval=frame:flags=bicubic,`
     + `crop=${W}:${H}:'(trunc(${f4(W0)}*${z}/2)*2-${W})/2':'(trunc(${f4(H0)}*${z}/2)*2-${H})/2',format=yuv420p${tm}[vz]`,
-    `[vz][1:v]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[vout]`,
+    `[vz][1:v]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[vsub]`,
   ];
+  let prev = 'vsub';
+  brollEvents.forEach((event, i) => {
+    const at = f4(event.at), end = f4(event.at + event.duration), idx = firstBrollInput + i;
+    graph.push(`[${idx}:v]trim=duration=${f4(event.duration)},setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,fps=${FPS},format=yuv420p[br${i}]`);
+    const out = i === brollEvents.length - 1 ? 'vout' : `vbr${i}`;
+    graph.push(`[${prev}][br${i}]overlay=0:0:format=auto:eof_action=pass:shortest=0:enable='between(t,${at},${end})'[${out}]`);
+    prev = out;
+  });
+  if (!brollEvents.length) graph[1] = '[vz][1:v]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[vout]';
+  return graph;
 }
 
 async function buildVoice(dir, input, info, q) {
@@ -107,7 +116,7 @@ async function musicAudioFilter(music, outDur, voiceLabel, musicIdx) {
   return { filter, musicArgs };
 }
 
-export async function renderVideo({ dir, input, info, plan, music, onProgress }) {
+export async function renderVideo({ dir, input, info, plan, music, brollEvents = [], onProgress }) {
   registerFonts();
   const q = quantizeKeep(plan.keep, info.duration);
   if (!q.frames) throw new Error('No quedó nada de video después de los cortes');
@@ -116,7 +125,8 @@ export async function renderVideo({ dir, input, info, plan, music, onProgress })
 
   // música: [0]=input video, [1]=overlay rgba, [2]=voice, [3]=música (si hay)
   const { filter: audioFilter, musicArgs } = await musicAudioFilter(music, outDur, '2:a', 3);
-  const graph = [...videoGraph(info, q, plan.zoomEvents), audioFilter].join(';');
+  const firstBrollInput = 3 + (musicArgs.length ? 1 : 0);
+  const graph = [...videoGraph(info, q, plan.zoomEvents, brollEvents, firstBrollInput), audioFilter].join(';');
   const script = path.join(dir, 'video.graph');
   await fs.writeFile(script, graph);
 
@@ -126,6 +136,7 @@ export async function renderVideo({ dir, input, info, plan, music, onProgress })
     '-i', input,
     '-thread_queue_size', '64', '-f', 'rawvideo', '-pixel_format', 'rgba', '-video_size', `${W}x${H}`, '-framerate', String(FPS), '-i', 'pipe:0',
     '-i', voice, ...musicArgs,
+    ...brollEvents.flatMap((event) => ['-stream_loop', '-1', '-i', event.file]),
     '-filter_complex', graph,
     '-map', '[vout]', '-map', '[aout]',
     '-c:v', 'libx264', '-preset', process.env.X264_PRESET || 'slow', '-crf', process.env.X264_CRF || '17',

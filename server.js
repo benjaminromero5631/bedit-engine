@@ -139,7 +139,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/jobs' && req.method === 'GET') {
       const out = [];
-      for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, approved: !!j.approved, deleted: !!j.deleted, createdAt: j.createdAt }); }
+      for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, approved: !!j.approved, published: !!j.published, deleted: !!j.deleted, createdAt: j.createdAt }); }
       return send(res, 200, { jobs: out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) });
     }
     if (p === '/jobs/clear-deleted' && req.method === 'POST') {
@@ -170,7 +170,7 @@ const server = http.createServer(async (req, res) => {
         const { callbackUrl, ...pub } = job;
         let project = null;
         try { project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8')); } catch {}
-        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, deleted: !!pub.deleted, editable: false, words: [], duration: 0, manualCuts: [],
+        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, published: !!pub.published, deleted: !!pub.deleted, editable: false, words: [], duration: 0, manualCuts: [],
           musicOff: pub.options?.music === false, musicName: pub.options?.musicName ?? (pub.stats?.musicName ?? null) };
         if (project) {
           out.duration = project.info.duration;
@@ -229,7 +229,7 @@ const server = http.createServer(async (req, res) => {
           }
         }
         const next = await editJob({ dir, project, removed, restored, edits, times, manualCuts });
-        await updateJob(id, { approved: false });
+        await updateJob(id, { approved: false, published: false });
         await enqueue(id, 'rerender', next);
         return send(res, 202, { id, status: 'en cola' });
       }
@@ -253,15 +253,15 @@ const server = http.createServer(async (req, res) => {
         let body;
         try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
         const st = body.state;
-        if (!['pendiente', 'aprobado', 'eliminado'].includes(st)) return send(res, 400, { error: 'Estado no válido' });
-        if (st === 'aprobado' && job.status !== 'listo') return send(res, 409, { error: 'Aún no está listo' });
-        await updateJob(id, { approved: st === 'aprobado', deleted: st === 'eliminado' });
+        if (!['pendiente', 'aprobado', 'publicado', 'eliminado'].includes(st)) return send(res, 400, { error: 'Estado no válido' });
+        if (['aprobado', 'publicado'].includes(st) && job.status !== 'listo') return send(res, 409, { error: 'Aún no está listo' });
+        await updateJob(id, { approved: ['aprobado', 'publicado'].includes(st), published: st === 'publicado', deleted: st === 'eliminado' });
         if (st === 'aprobado') await fireApproveHook(id, job);
         return send(res, 200, { ok: true, state: st });
       }
       if (sub === 'approve' && req.method === 'POST') {
         if (job.status !== 'listo') return send(res, 409, { error: 'Aún no está listo' });
-        await updateJob(id, { approved: true });
+        await updateJob(id, { approved: true, published: false });
         await fireApproveHook(id, job);
         return send(res, 200, { ok: true });
       }

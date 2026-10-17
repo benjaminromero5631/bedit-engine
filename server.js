@@ -96,11 +96,15 @@ const server = http.createServer(async (req, res) => {
         uploaded = await receiveFile(req, tmp, 'file', 150 * 1024 * 1024);
         const sourceName = uploaded.filename || '';
         if (!/\.(mp4|mov|m4v|webm)$/i.test(sourceName)) throw new Error('Sube un video MP4, MOV o WebM');
-        const info = await probe(tmp);
-        if (!info.hasVideo || info.duration < 0.4 || info.duration > 15) throw new Error('El clip debe durar entre 0,4 y 15 segundos');
+        const sourceInfo = await probe(tmp);
+        if (!sourceInfo.hasVideo) throw new Error('El archivo no contiene una pista de video');
         const id = crypto.randomBytes(8).toString('hex');
         converted = path.join(BROLL, 'clips', `${id}.mp4`);
         await run('ffmpeg', ['-y', '-v', 'error', '-i', tmp, '-an', '-vf', 'scale=540:960:force_original_aspect_ratio=increase,crop=540:960,setsar=1,fps=30', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', converted]);
+        // Some phone/MOV files report an incorrect container duration. Validate
+        // the normalized MP4 that B Edit will actually store and play instead.
+        const info = await probe(converted);
+        if (!info.hasVideo || info.duration < 0.4 || info.duration > 15) throw new Error('El clip convertido debe durar entre 0,4 y 15 segundos');
         const tags = String(uploaded.fields.tags || '').split(',').map((x) => x.trim()).filter(Boolean);
         const saved = await addBroll({ name: (uploaded.fields.name || sourceName).replace(/\.[^.]+$/, ''), tags, filename: converted, duration: info.duration });
         await fsp.rm(tmp, { force: true });

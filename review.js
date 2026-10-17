@@ -222,14 +222,21 @@ function render(d) {
   brollEvents = (d.brollEvents || []).map(function (e) { return { clipId: e.clipId, at: e.at, sourceAt: e.sourceAt, duration: e.duration }; });
   words = d.words;
   words.forEach(function (w) { if (w.i >= 0 && w.x) removed[w.i] = true; if (w.i >= 0 && w.k) restored[w.i] = true; });
-  var busy = d.status !== 'listo';
+  var busy = ['en cola', 'analizando', 'transcribiendo', 'renderizando', 'cancelando'].indexOf(d.status) >= 0;
   var h = '<div class="top"><button id="back">← Videos</button><b>' + esc(d.name || cur) + '</b>' + (d.published ? ' <span class="tag ok">publicado</span>' : (d.approved ? ' <span class="tag ok">listo</span>' : '')) + '</div>';
   if (busy) {
-    h += '<p class="msg" id="st">Procesando: ' + esc(d.status) + ' ' + Math.round((d.progress || 0) * 100) + '%…</p>';
+    h += '<p class="msg" id="st">' + (d.status === 'cancelando' ? 'Cancelando render…' : 'Procesando: ' + esc(d.status) + ' ' + Math.round((d.progress || 0) * 100) + '%…') + '</p>';
+    if (d.kind === 'rerender' && d.status !== 'cancelando') h += '<button class="dng" id="cancelRender">Cancelar render</button>';
     app.innerHTML = h; document.getElementById('back').onclick = showList;
-    poll = setInterval(function () { api('/jobs/' + cur + '/review').then(function (n) { if (n.status === 'listo' || n.status === 'error') { clearInterval(poll); render(n); } else document.getElementById('st').textContent = 'Procesando: ' + n.status + ' ' + Math.round((n.progress || 0) * 100) + '%…'; }); }, 5000);
+    var cancelButton = document.getElementById('cancelRender');
+    if (cancelButton) cancelButton.onclick = function () {
+      cancelButton.disabled = true; cancelButton.textContent = 'Cancelando…';
+      api('/jobs/' + cur + '/cancel', { method: 'POST' }).then(function () { openJob(cur); }).catch(function (e) { alert('No se pudo cancelar: ' + e.message); openJob(cur); });
+    };
+    poll = setInterval(function () { api('/jobs/' + cur + '/review').then(function (n) { if (n.status === 'listo' || n.status === 'error') { clearInterval(poll); render(n); } else document.getElementById('st').textContent = n.status === 'cancelando' ? 'Cancelando render…' : 'Procesando: ' + n.status + ' ' + Math.round((n.progress || 0) * 100) + '%…'; }); }, 3000);
     return;
   }
+  if (d.lastRenderCancelled) h += '<p class="msg">Render cancelado. Se conservó la versión anterior del video.</p>';
   if (d.status === 'error') h += '<p class="msg">Hubo un error: ' + esc(d.error || '') + '</p>';
   var st = d.deleted ? 'eliminado' : (d.published ? 'publicado' : (d.approved ? 'aprobado' : 'pendiente'));
   h += '<div class="detail"><div id="previewWrap"><video id="v" controls playsinline src="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '&v=' + Date.now() + '"></video><video id="brollPreview" muted playsinline></video></div><div>';

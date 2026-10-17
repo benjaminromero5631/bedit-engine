@@ -1,6 +1,7 @@
 // Render final: cortes + zoom + subtítulos + audio parejo + música, todo con ffmpeg (CPU, calidad alta).
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createCanvas } from '@napi-rs/canvas';
 import { PRESET } from './core/config.js';
@@ -67,11 +68,10 @@ function videoGraph(info, q, zooms, brollEvents = [], firstBrollInput = 4) {
   return graph;
 }
 
-async function buildVoice(dir, input, info, q) {
+async function buildVoice(dir, input, info, q, voice = path.join(dir, 'voice.wav')) {
   const outDur = q.frames / FPS;
   const align = alignFilter(info);
-  const pre = path.join(dir, 'voice_pre.wav');
-  const voice = path.join(dir, 'voice.wav');
+  const pre = path.join(dir, `${path.basename(voice, '.wav')}_pre.wav`);
   const comp = 'acompressor=threshold=0.0501:ratio=3:attack=5:release=150:makeup=1:knee=2.8';
   let graph;
   const args = ['-y', '-v', 'error', '-nostats'];
@@ -116,21 +116,31 @@ async function musicAudioFilter(music, outDur, voiceLabel, musicIdx) {
   return { filter, musicArgs };
 }
 
-export async function renderVideo({ dir, input, info, plan, music, brollEvents = [], onProgress }) {
+export async function renderVideo({ dir, input, info, plan, music, brollEvents = [], onProgress, signal }) {
   registerFonts();
   const q = quantizeKeep(plan.keep, info.duration);
   if (!q.frames) throw new Error('No quedó nada de video después de los cortes');
-  const { voice, outDur } = await buildVoice(dir, input, info, q);
+  const renderId = crypto.randomUUID();
+  const voiceTmp = path.join(dir, `voice_${renderId}.wav`);
+  const out = path.join(dir, `final_${renderId}.mp4`);
+  const { voice, outDur } = await buildVoice(dir, input, info, q, voiceTmp);
+  if (signal?.aborted) {
+    await Promise.all([fs.rm(voiceTmp, { force: true }), fs.rm(path.join(dir, `${path.basename(voiceTmp, '.wav')}_pre.wav`), { force: true })]);
+    throw Object.assign(new Error('Render cancelado'), { name: 'AbortError' });
+  }
   onProgress?.(0.05);
 
   // música: [0]=input video, [1]=overlay rgba, [2]=voice, [3]=música (si hay)
   const { filter: audioFilter, musicArgs } = await musicAudioFilter(music, outDur, '2:a', 3);
+  if (signal?.aborted) {
+    await Promise.all([fs.rm(voiceTmp, { force: true }), fs.rm(path.join(dir, `${path.basename(voiceTmp, '.wav')}_pre.wav`), { force: true })]);
+    throw Object.assign(new Error('Render cancelado'), { name: 'AbortError' });
+  }
   const firstBrollInput = 3 + (musicArgs.length ? 1 : 0);
   const graph = [...videoGraph(info, q, plan.zoomEvents, brollEvents, firstBrollInput), audioFilter].join(';');
   const script = path.join(dir, 'video.graph');
   await fs.writeFile(script, graph);
 
-  const out = path.join(dir, 'final.mp4');
   const args = [
     '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1',
     '-i', input,
@@ -150,6 +160,9 @@ export async function renderVideo({ dir, input, info, plan, music, brollEvents =
   if (process.env.THREADS) args.splice(args.indexOf('-movflags'), 0, '-threads', process.env.THREADS);
   const [c0, a0] = lowPriority('ffmpeg', args);
   const ff = spawn(c0, a0, { stdio: ['pipe', 'pipe', 'pipe'] });
+  const abortRender = () => ff.kill('SIGTERM');
+  if (signal?.aborted) abortRender();
+  else signal?.addEventListener('abort', abortRender, { once: true });
   let err = '';
   ff.stderr.on('data', (d) => { err = (err + d).slice(-8000); });
   ff.stdout.on('data', (d) => {
@@ -158,7 +171,7 @@ export async function renderVideo({ dir, input, info, plan, music, brollEvents =
   });
   const done = new Promise((res, rej) => {
     ff.on('error', rej);
-    ff.on('close', (c) => (c === 0 ? res() : rej(new Error(`ffmpeg falló (${c})\n${err}`))));
+    ff.on('close', (c) => (c === 0 && !signal?.aborted ? res() : rej(Object.assign(new Error(signal?.aborted ? 'Render cancelado' : `ffmpeg falló (${c})\n${err}`), { name: signal?.aborted ? 'AbortError' : 'Error' }))));
   });
   done.catch(() => {});
   let stdinErr = null;
@@ -192,9 +205,20 @@ export async function renderVideo({ dir, input, info, plan, music, brollEvents =
     if (!ff.stdin.write(lastBuf)) await Promise.race([new Promise((r) => ff.stdin.once('drain', r)), done]);
   }
   ff.stdin.end();
-  await done;
-  const ln = await integratedLufs(out);
-  return { file: out, frames: q.frames, duration: outDur, lufs: ln.lufs, peak: ln.peak, segments: q.segs.length };
+  try {
+    await done;
+    if (signal?.aborted) throw Object.assign(new Error('Render cancelado'), { name: 'AbortError' });
+    const ln = await integratedLufs(out);
+    if (signal?.aborted) throw Object.assign(new Error('Render cancelado'), { name: 'AbortError' });
+    await fs.rename(voiceTmp, path.join(dir, 'voice.wav'));
+    await fs.rename(out, path.join(dir, 'final.mp4'));
+    return { file: path.join(dir, 'final.mp4'), frames: q.frames, duration: outDur, lufs: ln.lufs, peak: ln.peak, segments: q.segs.length };
+  } catch (error) {
+    await Promise.all([fs.rm(out, { force: true }), fs.rm(voiceTmp, { force: true })]);
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', abortRender);
+  }
 }
 
 /**

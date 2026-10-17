@@ -9,7 +9,7 @@ import { brollFile } from './broll.js';
 const round = (x) => Math.round(x * 1000) / 1000;
 
 /** Edición automática completa: transcribir → plan → project.json → render. */
-export async function processJob({ dir, input, options = {}, music, setStatus }) {
+export async function processJob({ dir, input, options = {}, music, setStatus, signal }) {
   const info = await probe(input);
   if (info.duration > 125) throw new Error('El video dura más de 2 minutos');
   setStatus('analizando', 0.02);
@@ -24,24 +24,24 @@ export async function processJob({ dir, input, options = {}, music, setStatus })
   };
   await fs.writeFile(path.join(dir, 'project.json'), JSON.stringify(project, (k, v) => (typeof v === 'number' ? round(v) : v), 1));
   setStatus('renderizando', 0.1);
-  const stats = await renderVideo({ dir, input, info, plan, music, onProgress: (p) => setStatus('renderizando', 0.1 + 0.9 * p) });
+  const stats = await renderVideo({ dir, input, info, plan, music, signal, onProgress: (p) => setStatus('renderizando', 0.1 + 0.9 * p) });
   return { ...stats, phrases: plan.phrases.length, cuts: plan.cuts.length, zooms: plan.zoomEvents.length, musicName: music?.name || null };
 }
 
 /** Re-render con un project.json revisado (textos, cortes, zooms editados). */
-export async function rerenderJob({ dir, input, project, music, setStatus }) {
+export async function rerenderJob({ dir, input, project, music, setStatus, signal }) {
   const info = project.info || (await probe(input));
   setStatus('renderizando', 0.02);
   const plan = replan({ phrases: project.phrases, words: project.words, fillers: project.fillers, cuts: project.cuts, duration: info.duration, seed: project.seed || 1, zoomEvents: project.zoomEvents || null });
   const merged = { ...project, phrases: plan.phrases, zoomEvents: plan.zoomEvents };
-  await fs.writeFile(path.join(dir, 'project.json'), JSON.stringify(merged, (k, v) => (typeof v === 'number' ? round(v) : v), 1));
   const brollEvents = [];
   for (const event of project.brollEvents || []) {
     const file = await brollFile(event.clipId);
     if (!file) throw new Error('No se encontró un clip B-roll aprobado');
     brollEvents.push({ ...event, file });
   }
-  const stats = await renderVideo({ dir, input, info, plan, music, brollEvents, onProgress: (p) => setStatus('renderizando', 0.02 + 0.98 * p) });
+  const stats = await renderVideo({ dir, input, info, plan, music, brollEvents, signal, onProgress: (p) => setStatus('renderizando', 0.02 + 0.98 * p) });
+  await fs.writeFile(path.join(dir, 'project.json'), JSON.stringify(merged, (k, v) => (typeof v === 'number' ? round(v) : v), 1));
   return { ...stats, phrases: plan.phrases.length, cuts: plan.cuts.length, zooms: plan.zoomEvents.length, musicName: music?.name || null };
 }
 

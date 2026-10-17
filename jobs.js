@@ -15,6 +15,7 @@ export async function initDirs() { await fs.mkdir(JOBS, { recursive: true }); aw
 
 const queue = [];
 let running = false;
+const activeJobs = new Map();
 
 const jobFile = (id) => path.join(JOBS, id, 'job.json');
 export async function readJob(id) {
@@ -42,11 +43,34 @@ export async function updateJob(id, patch) {
 export async function enqueue(id, kind = 'process', project = null) {
   const job = await readJob(id);
   job.status = 'en cola'; job.progress = 0; job.error = null; job.kind = kind;
+  job.lastRenderCancelled = false;
   if (project) await fs.writeFile(path.join(JOBS, id, 'project_in.json'), JSON.stringify(project));
   await saveJob(job);
   queue.push(id);
   pump();
   return job;
+}
+
+export async function cancelJob(id) {
+  const job = await readJob(id);
+  if (!job) return { ok: false, status: 404, error: 'No existe ese trabajo' };
+  if (!['en cola', 'analizando', 'transcribiendo', 'renderizando', 'cancelando'].includes(job.status)) {
+    return { ok: false, status: 409, error: 'Este video no tiene un proceso que se pueda cancelar' };
+  }
+  const active = activeJobs.get(id);
+  if (active) {
+    if (job.status !== 'cancelando') { job.status = 'cancelando'; job.cancelRequested = true; await saveJob(job); }
+    active.controller.abort();
+    return { ok: true, status: 202, job };
+  }
+  const queuedAt = queue.indexOf(id);
+  if (queuedAt >= 0) queue.splice(queuedAt, 1);
+  job.status = job.kind === 'rerender' ? 'listo' : 'error';
+  job.progress = job.kind === 'rerender' ? 1 : job.progress;
+  job.error = job.kind === 'rerender' ? null : 'Proceso cancelado por el usuario';
+  job.lastRenderCancelled = job.kind === 'rerender';
+  await saveJob(job);
+  return { ok: true, status: 200, job };
 }
 
 // ── música: pista fija por defecto, con rotación como respaldo si no hay default ──
@@ -121,30 +145,39 @@ async function pump() {
   running = true;
   while (queue.length) {
     const id = queue.shift();
+    const controller = new AbortController();
+    activeJobs.set(id, { controller });
     const job = await readJob(id);
-    if (!job) continue;
+    if (!job) { activeJobs.delete(id); continue; }
     const dir = path.join(JOBS, id);
-    const setStatus = (status, progress) => { job.status = status; job.progress = Math.round(progress * 1000) / 1000; saveJob(job).catch(() => {}); };
+    const setStatus = (status, progress) => { if (controller.signal.aborted) return; job.status = status; job.progress = Math.round(progress * 1000) / 1000; saveJob(job).catch(() => {}); };
     try {
+      if (controller.signal.aborted) throw Object.assign(new Error('Proceso cancelado'), { name: 'AbortError' });
       setStatus('analizando', 0.01);
       const input = path.join(dir, job.input);
       const music = job.options.music === false ? null : (await musicByName(job.options.musicName)) || (await pickMusic());
       let stats;
       if (job.kind === 'rerender') {
         const project = JSON.parse(await fs.readFile(path.join(dir, 'project_in.json'), 'utf8'));
-        stats = await rerenderJob({ dir, input, project, music, setStatus });
+        stats = await rerenderJob({ dir, input, project, music, setStatus, signal: controller.signal });
       } else {
-        stats = await processJob({ dir, input, options: job.options, music, setStatus });
+        stats = await processJob({ dir, input, options: job.options, music, setStatus, signal: controller.signal });
       }
       job.stats = stats; job.status = 'listo'; job.progress = 1; job.error = null;
+      job.lastRenderCancelled = false;
       delete job.stats.file;
     } catch (e) {
       console.error('Job', id, 'falló:', e.message);
-      job.status = 'error'; job.error = String(e.message).slice(0, 1500);
+      if (controller.signal.aborted) {
+        job.status = job.kind === 'rerender' ? 'listo' : 'error';
+        job.progress = job.kind === 'rerender' ? 1 : job.progress;
+        job.error = job.kind === 'rerender' ? null : 'Proceso cancelado por el usuario';
+        job.lastRenderCancelled = job.kind === 'rerender';
+      } else { job.status = 'error'; job.error = String(e.message).slice(0, 1500); }
     }
+    activeJobs.delete(id);
     await saveJob(job);
-    await notify(job);
-    await push(job);
+    if (!job.lastRenderCancelled) { await notify(job); await push(job); }
   }
   running = false;
 }

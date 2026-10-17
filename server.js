@@ -9,7 +9,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import Busboy from 'busboy';
-import { initDirs, createJob, updateJob, enqueue, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, JOBS, MUSIC, BROLL } from './jobs.js';
+import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
@@ -201,12 +201,16 @@ const server = http.createServer(async (req, res) => {
       }
       return send(res, 200, { ok: true, removed, skipped });
     }
-    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope|review|edit|approve|state|music))?$/);
+    m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|project|rerender|input|envelope|review|edit|approve|state|music|cancel))?$/);
     if (m) {
       const [, id, sub] = m;
       const job = await readJob(id);
       if (!job) return send(res, 404, { error: 'No existe ese trabajo' });
       const dir = path.join(JOBS, id);
+      if (sub === 'cancel' && req.method === 'POST') {
+        const result = await cancelJob(id);
+        return send(res, result.status, result.ok ? { ok: true, status: result.job.status } : { error: result.error });
+      }
       if (!sub && req.method === 'GET') { const { callbackUrl, ...pub } = job; return send(res, 200, pub); }
       if (!sub && req.method === 'DELETE') { await fsp.rm(dir, { recursive: true, force: true }); return send(res, 200, { ok: true }); }
       if (sub === 'result' && req.method === 'GET') {
@@ -217,7 +221,7 @@ const server = http.createServer(async (req, res) => {
         const { callbackUrl, ...pub } = job;
         let project = null;
         try { project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8')); } catch {}
-        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, approved: !!pub.approved, published: !!pub.published, deleted: !!pub.deleted, editable: false, words: [], duration: 0, manualCuts: [],
+        const out = { id, name: pub.name, status: pub.status, progress: pub.progress, error: pub.error, kind: pub.kind, lastRenderCancelled: !!pub.lastRenderCancelled, approved: !!pub.approved, published: !!pub.published, deleted: !!pub.deleted, editable: false, words: [], duration: 0, manualCuts: [],
           musicOff: pub.options?.music === false, musicName: pub.options?.musicName ?? (pub.stats?.musicName ?? null), brollEvents: [], brollClips: [], brollSuggestions: [] };
         if (project) {
           out.duration = project.info.duration;

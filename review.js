@@ -24,6 +24,7 @@ main{max-width:1000px;margin:0 auto;padding:16px}
 .download{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--ac);color:#06210f;text-decoration:none;font-weight:650;padding:9px 12px;border-radius:10px;white-space:nowrap}
 .download:hover{filter:brightness(1.08)}
 .gallery-save{display:inline-flex;align-items:center;justify-content:center;background:#262a31;color:var(--tx);border:1px solid #424854;font-weight:600;padding:8px 11px;border-radius:10px;white-space:nowrap}
+.mark-published{display:inline-flex;align-items:center;justify-content:center;background:#202b25;color:var(--ac);border:1px solid #397953;font-weight:650;padding:8px 11px;border-radius:10px;white-space:nowrap}
 .item small{color:var(--mut)}
 .tag{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--mut)}
 .tag.ok{color:var(--ac);border-color:var(--ac)}
@@ -189,6 +190,7 @@ function drawList() {
       var st = j.status === 'listo' ? '<span class="tag ok">listo</span>' : '<span class="tag">' + esc(j.status) + (j.progress ? ' ' + Math.round(j.progress * 100) + '%' : '') + '</span>';
       h += '<div class="item" data-id="' + j.id + '"><div class="item-info">' + esc(j.name || j.id) + '<br><small>' + new Date(j.createdAt).toLocaleString('es-CL') + '</small></div><div class="item-actions">' + st;
       if (['aprobado', 'publicado'].includes(tab) && j.status === 'listo') { h += '<a class="download" href="/jobs/' + j.id + '/result?t=' + encodeURIComponent(TOKEN) + '" aria-label="Descargar ' + esc(j.name || 'video') + '">⬇ Descargar</a>'; h += '<button class="gallery-save" data-gallery-id="' + j.id + '">📱 Guardar en galería</button>'; }
+      if (tab === 'aprobado' && j.status === 'listo') h += '<button class="mark-published" data-publish-id="' + j.id + '">✓ Marcar publicado</button>';
       h += '</div></div>';
     });
     h += '</div>';
@@ -198,6 +200,14 @@ function drawList() {
   Array.prototype.forEach.call(app.querySelectorAll('.item'), function (el) { el.onclick = function () { openJob(el.getAttribute('data-id')); }; });
   Array.prototype.forEach.call(app.querySelectorAll('.item .download'), function (el) { el.onclick = function (event) { event.stopPropagation(); }; });
   Array.prototype.forEach.call(app.querySelectorAll('[data-gallery-id]'), function (el) { el.onclick = function (event) { event.stopPropagation(); saveToGallery(el.getAttribute('data-gallery-id'), el); }; });
+  Array.prototype.forEach.call(app.querySelectorAll('[data-publish-id]'), function (el) { el.onclick = function (event) {
+    event.stopPropagation();
+    var id = el.getAttribute('data-publish-id');
+    el.disabled = true; el.textContent = 'Guardando…';
+    api('/jobs/' + id + '/state', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ state: 'publicado' }) })
+      .then(function () { tab = 'publicado'; listNotice = 'Video marcado como publicado.'; showList(); })
+      .catch(function (e) { el.disabled = false; el.textContent = '✓ Marcar publicado'; alert('No se pudo mover a Publicados: ' + e.message); });
+  }; });
   var clear = document.getElementById('clearDeleted');
   if (clear) clear.onclick = function () {
     if (!confirm('¿Eliminar definitivamente el historial de videos en Eliminados? Esto borra sus archivos y no se puede deshacer. Los videos pendientes y aprobados no se tocarán.')) return;

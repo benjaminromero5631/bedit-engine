@@ -3,16 +3,18 @@
 
 export const CUT_CFG = {
   hop: 0.01,            // s por cuadro de energía
-  aboveFloorDb: 12,     // la voz tiene que superar el ruido de fondo por esto
+  aboveFloorDb: 14,     // exige más diferencia sobre el ruido para conservar audio sin voz
   thrMinDb: -42,        // límites del umbral (dBFS)
-  thrMaxDb: -34,
-  closeGap: 0.18,       // huecos de voz más cortos que esto se rellenan (respiros dentro de una palabra)
-  minBlip: 0.10,        // ruidos más cortos que esto no cuentan como voz
-  wordPadBefore: 0.03,
-  wordPadAfter: 0.05,
-  padLead: 0.05,        // respiro antes de hablar
-  padTail: 0.075,        // respiro después de hablar
-  minCut: 0.10,         // cortes más cortos que esto se ignoran
+  thrMaxDb: -32,
+  closeGap: 0.12,       // une menos los huecos para recortar pausas internas con mayor precisión
+  minBlip: 0.08,        // ruidos muy breves no cuentan como voz
+  wordPadBefore: 0.02,
+  wordPadAfter: 0.04,
+  speechGuardBefore: 0.06,
+  speechGuardAfter: 0.06,
+  padLead: 0.025,       // deja un margen corto antes de hablar
+  padTail: 0.045,       // deja un margen corto al terminar
+  minCut: 0.06,         // también permite quitar pausas breves
   fillerShrink: 0.03,
   snapWordsToEnergy: true,  // ajusta inicio/fin de cada palabra al sonido real (Whisper suele alargarlas)
   requireWords: true,   // true: solo se queda lo que coincide con palabras entendidas (ignora ruidos de fondo)
@@ -22,7 +24,7 @@ export const CUT_CFG = {
 export const CUT_PRESETS = {
   suave:  { ...CUT_CFG, aboveFloorDb: 8,  padLead: 0.14, padTail: 0.22, closeGap: 0.4 },
   normal: { ...CUT_CFG },
-  fuerte: { ...CUT_CFG, aboveFloorDb: 14, requireWords: true, wordPadBefore: 0.08, wordPadAfter: 0.14, padLead: 0.08, padTail: 0.13 },
+  fuerte: { ...CUT_CFG, aboveFloorDb: 16, thrMaxDb: -30, closeGap: 0.07, wordPadBefore: 0.015, wordPadAfter: 0.025, speechGuardBefore: 0.04, speechGuardAfter: 0.04, padLead: 0.015, padTail: 0.025, minCut: 0.05, requireWords: true },
 };
 
 export function frameDb(audio, sr, hop) {
@@ -108,7 +110,7 @@ export function detectCuts(audio, sr, words, fillers, duration, cfg = CUT_CFG) {
   const wordIv = snapped.map(([a, b]) => [Math.max(0, a - cfg.wordPadBefore), Math.min(duration, b + cfg.wordPadAfter)]);
   if (cfg.requireWords) {
     // solo se queda la voz que coincide con palabras (con un margen); ruidos/respiros fuera de ellas = silencio
-    const ext = wordIv.map(([a, b]) => [a - 0.12, b + 0.12]);
+    const ext = wordIv.map(([a, b]) => [a - (cfg.speechGuardBefore ?? 0.12), b + (cfg.speechGuardAfter ?? 0.12)]);
     const clipped = [];
     for (const [a, b] of voiced) for (const [x, y] of ext) { const s = Math.max(a, x), e = Math.min(b, y); if (e - s > 0.02) clipped.push([s, e]); }
     voiced = mergeIntervals(clipped);

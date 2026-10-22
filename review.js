@@ -18,6 +18,7 @@ main{max-width:1000px;margin:0 auto;padding:16px}
 .list-tools .tabs{margin:0}
 .clear-deleted{border-color:var(--usr);color:#fda4af}
 .clear-deleted:hover{background:#351b23}
+.recut-pending{border-color:#e7a640;color:#ffd083}
 .item{display:flex;justify-content:space-between;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer}
 .item-info{min-width:0;overflow-wrap:anywhere}
 .item-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
@@ -181,6 +182,8 @@ function drawList() {
   ['pendiente', 'aprobado', 'publicado', 'eliminado'].forEach(function (k) { h += '<button data-tab="' + k + '"' + (tab === k ? ' class="on"' : '') + '>' + names[k] + ' (' + counts[k] + ')</button>'; });
   h += '</div>';
   if (tab === 'eliminado') h += '<button id="clearDeleted" class="clear-deleted">Limpiar historial</button>';
+  var recutCount = lastJobs.filter(function (j) { return stateOf(j) === 'pendiente' && j.status === 'listo'; }).length;
+  if (tab === 'pendiente' && recutCount) h += '<button id="recutPending" class="recut-pending">Aplicar cortes más fuertes (' + recutCount + ')</button>';
   h += '</div>';
   var rows = lastJobs.filter(function (j) { return stateOf(j) === tab; });
   if (!rows.length) h += '<p class="msg">No hay videos aquí.</p>';
@@ -216,6 +219,17 @@ function drawList() {
       listNotice = 'Historial limpiado: ' + result.removed + ' video(s) eliminados.' + (result.skipped ? ' ' + result.skipped + ' en procesamiento se conservaron por ahora.' : '');
       showList();
     }).catch(function (e) { listNotice = 'No se pudo limpiar el historial: ' + e.message; showList(); });
+  };
+  var recut = document.getElementById('recutPending');
+  if (recut) recut.onclick = function () {
+    var count = lastJobs.filter(function (j) { return stateOf(j) === 'pendiente' && j.status === 'listo'; }).length;
+    if (!count || !confirm('Se recalcularán y renderizarán los cortes de ' + count + ' videos pendientes con el perfil más estricto. Cada archivo actual se conserva si falla su nuevo render. ¿Continuar?')) return;
+    recut.disabled = true; recut.textContent = 'Preparando ' + count + ' videos…';
+    api('/jobs/recut-pending', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      .then(function (result) {
+        listNotice = 'En cola para aplicar cortes más fuertes: ' + result.queued.length + ' video(s).' + (result.skipped.length ? ' Se omitieron ' + result.skipped.length + ' por falta de datos compatibles.' : '');
+        showList();
+      }).catch(function (e) { listNotice = 'No se pudieron actualizar los cortes: ' + e.message; showList(); });
   };
 }
 

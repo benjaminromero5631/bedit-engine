@@ -1,5 +1,5 @@
 import { keepFromCuts, frameDb } from './core/cuts.js';
-import { editJob } from './pipeline.js';
+import { editJob, strengthenJobCuts } from './pipeline.js';
 import { applyMusicOnly, quantizeKeep } from './render.js';
 import { probe, run } from './media.js';
 import { REVIEW_HTML } from './review.js';
@@ -168,6 +168,28 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ── trabajos ──
+    if (p === '/jobs/recut-pending' && req.method === 'POST') {
+      const ids = (await fsp.readdir(JOBS)).sort();
+      const queued = [], skipped = [];
+      for (const id of ids) {
+        const job = await readJob(id);
+        if (!job || job.status !== 'listo' || job.approved || job.published || job.deleted) continue;
+        const dir = path.join(JOBS, id);
+        let project;
+        try { project = JSON.parse(await fsp.readFile(path.join(dir, 'project.json'), 'utf8')); }
+        catch { skipped.push({ id, name: job.name, reason: 'No tiene proyecto guardado' }); continue; }
+        if (!Array.isArray(project.words) || !project.words.length || !project.words[0].raw) {
+          skipped.push({ id, name: job.name, reason: 'Versión antigua sin palabras editables' }); continue;
+        }
+        try {
+          const next = await strengthenJobCuts({ dir, project, sensitivity: 'fuerte' });
+          await updateJob(id, { options: { ...job.options, sensitivity: 'fuerte' } });
+          await enqueue(id, 'rerender', next);
+          queued.push({ id, name: job.name });
+        } catch (e) { skipped.push({ id, name: job.name, reason: String(e.message).slice(0, 180) }); }
+      }
+      return send(res, 202, { ok: true, queued, skipped, sensitivity: 'fuerte' });
+    }
     if (p === '/jobs' && req.method === 'POST') {
       const { job, dir } = await createJob({ ext: '.mov' });
       try {

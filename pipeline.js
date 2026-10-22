@@ -46,7 +46,7 @@ export async function rerenderJob({ dir, input, project, music, setStatus, signa
 }
 
 /** Aplica lo que Benjamin cambió en la revisión (palabras quitadas/recuperadas, texto, tiempo de palabras, cortes manuales en la línea de tiempo) y devuelve el project.json nuevo (sin renderizar). */
-export async function editJob({ dir, project, removed, restored = new Set(), edits = {}, times = {}, manualCuts = [], brollEvents = [] }) {
+export async function editJob({ dir, project, removed, restored = new Set(), edits = {}, times = {}, manualCuts = [], brollEvents = [], sensitivity = project.options?.sensitivity || 'normal' }) {
   const buf = await fs.readFile(path.join(dir, 'audio16k.wav'));
   const at = buf.indexOf('data');
   const pcm = buf.subarray(at + 8);
@@ -55,7 +55,17 @@ export async function editJob({ dir, project, removed, restored = new Set(), edi
   for (let i = 0; i < n; i++) audio[i] = pcm.readFloatLE(i * 4);
   const plan = editPlan({
     audio16k: audio, words: project.words, fillers: project.fillers || [], duration: project.info.duration,
-    sensitivity: project.options?.sensitivity || 'normal', seed: project.seed || 1, removed: new Set(removed), restored: new Set(restored), edits, times, manualCuts,
+    sensitivity, seed: project.seed || 1, removed: new Set(removed), restored: new Set(restored), edits, times, manualCuts,
   });
-  return { ...project, words: plan.words, phrases: plan.phrases, cuts: plan.cuts, zoomEvents: plan.zoomEvents, manualCuts: plan.manualCuts, brollEvents };
+  return { ...project, options: { ...project.options, sensitivity }, words: plan.words, phrases: plan.phrases, cuts: plan.cuts, zoomEvents: plan.zoomEvents, manualCuts: plan.manualCuts, brollEvents };
+}
+
+/** Recalcula cortes de un proyecto existente sin perder palabras quitadas/recuperadas ni ajustes manuales. */
+export async function strengthenJobCuts({ dir, project, sensitivity = 'fuerte' }) {
+  const removed = new Set(), restored = new Set();
+  (project.words || []).forEach((w, i) => {
+    if (w.x) removed.add(i);
+    if (w.k && !w.x) restored.add(i);
+  });
+  return editJob({ dir, project, removed, restored, edits: {}, times: {}, manualCuts: project.manualCuts || [], brollEvents: project.brollEvents || [], sensitivity });
 }

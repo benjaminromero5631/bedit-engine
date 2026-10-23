@@ -43,7 +43,7 @@ async function defaultMusic(){
     const state=JSON.parse(await fs.readFile(process.env.MUSIC_STATE||'/bedit-data/state.json','utf8'));
     const dir=process.env.MUSIC_DIR||'/bedit-data/music';
     if(state.defaultMusic){const p=path.join(dir,path.basename(state.defaultMusic));await fs.access(p);return p;}
-    const names=(await fs.readdir(dir)).filter(n=>/\.(mp3|m4a|wav|aac|ogg|flac)$/i.test(n)).sort();return names.length?path.join(dir,names[0]):null;
+    return null;
   }catch{return null;}
 }
 
@@ -59,7 +59,7 @@ async function work(job){
     const musicPath=await defaultMusic();
     const stats=await renderGreenScreen({input:job.input,images:job.images,dir:job.dir,info,plan,musicPath});
     const uncertain=(plan.words||[]).filter(w=>Number.isFinite(w.confidence)&&w.confidence<0.55).length;
-    job.status='listo';job.stats={...stats,words:plan.words.length,fillers:plan.fillers.length,music:musicPath?path.basename(musicPath):null,warning:job.images.length<4?'Se recibieron menos de 4 imágenes; se repitieron en el mosaico inicial.':null,review:uncertain>0?`${uncertain} palabras con confianza baja; revisa que los cortes no afecten el guion.`:null};
+    job.status='listo';job.stats={...stats,words:plan.words.length,fillers:plan.fillers.length,music:musicPath?path.basename(musicPath):null,warning:job.images.length<4?'Se recibieron menos de 4 imágenes; se repitieron en el mosaico inicial.':null,musicWarning:!musicPath?'No se encontró la pista predeterminada; el borrador quedó sin música.':null,review:uncertain>0?`${uncertain} palabras con confianza baja; revisa que los cortes no afecten el guion.`:null};
     await fs.writeFile(path.join(job.dir,'plan.json'),JSON.stringify({info,words:plan.words,fillers:plan.fillers,cuts:plan.cuts,keep:plan.keep,stats:job.stats},null,2));
   }catch(e){job.status='error';job.error=String(e.message||e).slice(0,500);}
   job.updatedAt=new Date().toISOString();await saveJob(job);

@@ -14,7 +14,7 @@ RUN npm install --omit=dev
 COPY greenscreen/server.js ./greenscreen/server.js
 COPY greenscreen/segment.py ./greenscreen/segment.py
 COPY greenscreen/render.js ./greenscreen/render.js
-COPY media.js transcribe.js transcribe.py cuts.js plan.js ./
+COPY media.js transcribe.js transcribe.py cuts.js plan.js config.js draw.js ./
 
 ENV NODE_ENV=production PORT=8080 DATA_DIR=/data/green-screen \
     MUSIC_DIR=/bedit-data/music MUSIC_STATE=/bedit-data/state.json \

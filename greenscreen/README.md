@@ -9,7 +9,8 @@ In Drive, each Green Screen project is one subfolder inside `B Edit / Green Scre
 `POST /jobs` (multipart, `Authorization: Bearer <GREEN_SCREEN_TOKEN>`):
 
 - `video`: one camera recording (MP4/MOV/M4V/WebM/MKV, up to 2 GB, max 125 s).
-- `image`: one or more vertical JPG/PNG/WebP background images (repeat the field).
+- `image`: one or more vertical JPG/PNG/WebP background images (repeat the field), or numbered fields `image_1` through `image_11`.
+- `imageCount` (optional when sending numbered fields): number of actual images to use. This lets fixed-field workflow tools pad unused slots without treating the duplicates as extra backgrounds.
 - `name` (optional) and `callbackUrl` (optional).
 
 The first six final seconds use a 2×2 collage made from the first four images (repeat images if fewer were supplied). After that, every supplied image fills the background for an equal share of the remaining duration, so the background stays filled to the end. The camera foreground is segmented with MediaPipe Selfie Segmentation. The audio is transcribed in Spanish and the existing B Edit cut planner is reused at `fuerte` sensitivity; subtitles and zooms are not rendered. The exact default B Edit track is used only when its saved default is available; otherwise the job reports that music is missing and does not silently choose another track.

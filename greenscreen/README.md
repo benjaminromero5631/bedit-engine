@@ -12,7 +12,7 @@ In Drive, each Green Screen project is one subfolder inside `B Edit / Green Scre
 - `image`: one or more vertical JPG/PNG/WebP background images (repeat the field).
 - `name` (optional) and `callbackUrl` (optional).
 
-The first six final seconds use a 2×2 collage made from the first four images (repeat images if fewer were supplied). After that, every supplied image fills the background for an equal share of the remaining duration, so the background stays filled to the end. The camera foreground is segmented with MediaPipe Selfie Segmentation. The audio is transcribed in Spanish and the existing B Edit cut planner is reused at `fuerte` sensitivity; captions are not rendered. The exact default B Edit track is used only when its saved default is available; otherwise the job reports that music is missing and does not silently choose another track.
+The first six final seconds use a 2×2 collage made from the first four images (repeat images if fewer were supplied). After that, every supplied image fills the background for an equal share of the remaining duration, so the background stays filled to the end. The camera foreground is segmented with MediaPipe Selfie Segmentation. The audio is transcribed in Spanish and the existing B Edit cut planner is reused at `fuerte` sensitivity; subtitles and zooms are not rendered. The exact default B Edit track is used only when its saved default is available; otherwise the job reports that music is missing and does not silently choose another track.
 
 `GET /jobs/:id` returns status; `GET /jobs/:id/result` downloads the MP4; `GET /jobs/:id/plan` returns the transcript/cuts and review warnings. `GET /health` does not require a token.
 

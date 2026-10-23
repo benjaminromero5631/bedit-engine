@@ -20,18 +20,21 @@ const safe=s=>String(s||'archivo').replace(/[^\w. -áéíóúñÁÉÍÓÚÑ]/g,'
 async function receive(req,dir){
   await fs.mkdir(dir,{recursive:true});
   return new Promise((resolve,reject)=>{
-    const bb=Busboy({headers:req.headers,limits:{files:12,fileSize:2*1024*1024*1024}}), files=[], fields={}; let pending=[];
+    const bb=Busboy({headers:req.headers,limits:{files:12,fileSize:2*1024*1024*1024}}), files=[], fields={}; let pending=[],tooBig=false,invalid=null;
     bb.on('field',(n,v)=>fields[n]=v);
     bb.on('file',(field,stream,info)=>{
       const ext=path.extname(info.filename||'').toLowerCase();
       if(field!=='video'&&field!=='image'){stream.resume();return;}
-      if(field==='video'&&!['.mp4','.mov','.m4v','.webm','.mkv'].includes(ext)){stream.resume();return reject(new Error('El video debe ser MP4, MOV, M4V, WebM o MKV.'));}
-      if(field==='image'&&!['.jpg','.jpeg','.png','.webp'].includes(ext)){stream.resume();return reject(new Error('Las imágenes deben ser JPG, PNG o WebP.'));}
+      if(field==='video'&&!['.mp4','.mov','.m4v','.webm','.mkv'].includes(ext)){stream.resume();invalid=new Error('El video debe ser MP4, MOV, M4V, WebM o MKV.');return;}
+      if(field==='image'&&!['.jpg','.jpeg','.png','.webp'].includes(ext)){stream.resume();invalid=new Error('Las imágenes deben ser JPG, PNG o WebP.');return;}
+      if(field==='video'&&files.some(x=>x.field==='video')){stream.resume();invalid=new Error('Envía solo un archivo de cámara por trabajo.');return;}
       const name=`${field==='video'?'camera':'image-'+files.length}${ext}`,target=path.join(dir,name),ws=createWriteStream(target);
       const p=new Promise((r,j)=>{ws.on('finish',r);ws.on('error',j);stream.on('error',j);});
+      stream.on('limit',()=>{tooBig=true;});
       stream.pipe(ws); files.push({field,name,sourceName:info.filename}); pending.push(p);
     });
-    bb.on('close',async()=>{try{await Promise.all(pending);const video=files.find(x=>x.field==='video');const images=files.filter(x=>x.field==='image').map(x=>path.join(dir,x.name));if(!video)throw new Error('Falta el archivo de cámara.');if(images.length<1)throw new Error('Agrega al menos una imagen vertical.');resolve({input:path.join(dir,video.name),images,fields,files});}catch(e){reject(e);}});
+    bb.on('filesLimit',()=>{invalid=new Error('Máximo 1 video y 11 imágenes por trabajo.');});
+    bb.on('close',async()=>{try{await Promise.all(pending);if(invalid)throw invalid;if(tooBig)throw new Error('Un archivo supera el límite de 2 GB.');const video=files.find(x=>x.field==='video');const images=files.filter(x=>x.field==='image').map(x=>path.join(dir,x.name));if(!video)throw new Error('Falta el archivo de cámara.');if(images.length<1)throw new Error('Agrega al menos una imagen vertical.');resolve({input:path.join(dir,video.name),images,fields,files});}catch(e){reject(e);}});
     bb.on('error',reject);req.pipe(bb);
   });
 }
@@ -60,7 +63,7 @@ async function work(job){
     await fs.writeFile(path.join(job.dir,'plan.json'),JSON.stringify({info,words:plan.words,fillers:plan.fillers,cuts:plan.cuts,keep:plan.keep,stats:job.stats},null,2));
   }catch(e){job.status='error';job.error=String(e.message||e).slice(0,500);}
   job.updatedAt=new Date().toISOString();await saveJob(job);
-  if(job.callbackUrl){try{await fetch(job.callbackUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:job.id,name:job.name,status:job.status,error:job.error||null,stats:job.stats||null,resultUrl:`/jobs/${job.id}/result`}),signal:AbortSignal.timeout(20000)});}catch(e){console.error('callback falló',e.message);}}
+  if(job.callbackUrl){for(let i=0;i<5;i++){try{const r=await fetch(job.callbackUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:job.id,name:job.name,status:job.status,error:job.error||null,stats:job.stats||null,resultUrl:`/jobs/${job.id}/result`}),signal:AbortSignal.timeout(20000)});if(r.ok)break;throw new Error(`HTTP ${r.status}`);}catch(e){console.error('callback falló',e.message);if(i<4)await new Promise(r=>setTimeout(r,5000*(i+1)));}}}
 }
 async function pump(){if(active)return;active=true;while(queue.length){const j=queue.shift();await work(j);}active=false;}
 
@@ -84,4 +87,7 @@ const server=http.createServer(async(req,res)=>{
   }catch(e){console.error(e);return send(res,400,{error:String(e.message||e).slice(0,500)});}
 });
 await fs.mkdir(path.join(DATA,'jobs'),{recursive:true});
+const retention=Number(process.env.RETENTION_DAYS||7)*86400000;
+const prune=async()=>{try{for(const id of await fs.readdir(path.join(DATA,'jobs'))){const dir=path.join(DATA,'jobs',id);const st=await fs.stat(dir);if(Date.now()-st.mtimeMs>retention){await fs.rm(dir,{recursive:true,force:true});jobs.delete(id);}}}catch(e){console.error('limpieza de trabajos falló',e.message);}};
+await prune();setInterval(prune,24*60*60*1000).unref();
 server.listen(PORT,'0.0.0.0',()=>console.log(`Green Screen engine escuchando en ${PORT}`));

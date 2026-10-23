@@ -9,8 +9,8 @@ const FPS = 30, W = 1080, H = 1920;
 const f = (n) => Number(n).toFixed(4);
 async function makeMasks(input, dir, keep, duration) {
   const mask = path.join(dir, 'person-mask.mkv');
-  const dec = spawn('ffmpeg', ['-v','error','-i',input,'-vf',`fps=${FPS},scale=540:960:force_original_aspect_ratio=increase,crop=540:960,setsar=1`,'-f','rawvideo','-pix_fmt','rgb24','pipe:1'], { stdio:['ignore','pipe','pipe'] });
-  const seg = spawn(process.env.PYTHON || 'python3', [path.join(path.dirname(new URL(import.meta.url).pathname),'segment.py')], { stdio:['pipe','pipe','pipe'] });
+  const dec = spawn('nice', ['-n','10','ffmpeg','-v','error','-i',input,'-vf',`fps=${FPS},scale=540:960:force_original_aspect_ratio=increase,crop=540:960,setsar=1`,'-f','rawvideo','-pix_fmt','rgb24','pipe:1'], { stdio:['ignore','pipe','pipe'] });
+  const seg = spawn('nice', ['-n','10',process.env.PYTHON || 'python3',path.join(path.dirname(new URL(import.meta.url).pathname),'segment.py')], { stdio:['pipe','pipe','pipe'] });
   const intervals = keep.map(k => `between(n,${Math.max(0,Math.round(k.s*FPS))},${Math.max(0,Math.round(k.e*FPS)-1)})`).join('+') || '0';
   const encArgs = ['-y','-v','error','-f','rawvideo','-pixel_format','gray','-video_size','540x960','-framerate',String(FPS),'-i','pipe:0','-vf',`select='${intervals}',setpts=N/(${FPS}*TB)`,'-an','-c:v','ffv1',mask];
   const enc = spawn('ffmpeg',encArgs,{stdio:['pipe','ignore','pipe']});

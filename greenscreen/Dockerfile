@@ -18,7 +18,7 @@ COPY media.js transcribe.js transcribe.py cuts.js plan.js config.js draw.js ./
 
 ENV NODE_ENV=production PORT=8080 DATA_DIR=/data/green-screen \
     MUSIC_DIR=/bedit-data/music MUSIC_STATE=/bedit-data/state.json \
-    WHISPER_MODEL=small X264_PRESET=veryfast X264_CRF=19 THREADS=2
+    WHISPER_MODEL=small WHISPER_THREADS=2 X264_PRESET=veryfast X264_CRF=19 THREADS=2
 VOLUME /data
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

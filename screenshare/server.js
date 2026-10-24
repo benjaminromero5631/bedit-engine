@@ -85,7 +85,7 @@ async function work(job) {
       durationWarning: durationMismatch ? `Cámara y pantalla duran distinto (cámara ${camInfo.duration.toFixed(1)}s, pantalla ${scrInfo.duration.toFixed(1)}s); se usó la parte en común (${duration.toFixed(1)}s). Revisa el borrador.` : null,
       review: uncertain > 0 ? `${uncertain} palabras con confianza baja; revisa que los cortes no afecten el guion.` : null,
     };
-    await fs.writeFile(path.join(job.dir, 'plan.json'), JSON.stringify({ duration, words: plan.words, wts�: plan.cuts, stats: job.stats }, null, 2));
+    await fs.writeFile(path.join(job.dir, 'plan.json'), JSON.stringify({ duration, words: plan.words, cuts: plan.cuts, stats: job.stats }, null, 2));
   } catch (e) { job.status = 'error'; job.error = String(e.message || e).slice(0, 500); }
   job.updatedAt = new Date().toISOString(); await saveJob(job);
   if (job.callbackUrl) {

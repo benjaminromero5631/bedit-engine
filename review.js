@@ -22,8 +22,6 @@ main{max-width:1000px;margin:0 auto;padding:16px}
 .item{display:flex;justify-content:space-between;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer}
 .item-info{min-width:0;overflow-wrap:anywhere}
 .item-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
-.download{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--ac);color:#06210f;text-decoration:none;font-weight:650;padding:9px 12px;border-radius:10px;white-space:nowrap}
-.download:hover{filter:brightness(1.08)}
 .gallery-save{display:inline-flex;align-items:center;justify-content:center;background:#262a31;color:var(--tx);border:1px solid #424854;font-weight:600;padding:8px 11px;border-radius:10px;white-space:nowrap}
 .mark-published{display:inline-flex;align-items:center;justify-content:center;background:#202b25;color:var(--ac);border:1px solid #397953;font-weight:650;padding:8px 11px;border-radius:10px;white-space:nowrap}
 .item small{color:var(--mut)}
@@ -192,7 +190,7 @@ function drawList() {
     rows.forEach(function (j) {
       var st = j.status === 'listo' ? '<span class="tag ok">listo</span>' : '<span class="tag">' + esc(j.status) + (j.progress ? ' ' + Math.round(j.progress * 100) + '%' : '') + '</span>';
       h += '<div class="item" data-id="' + j.id + '"><div class="item-info">' + esc(j.name || j.id) + '<br><small>' + new Date(j.createdAt).toLocaleString('es-CL') + '</small></div><div class="item-actions">' + st;
-      if (['aprobado', 'publicado'].includes(tab) && j.status === 'listo') { h += '<a class="download" href="/jobs/' + j.id + '/result?t=' + encodeURIComponent(TOKEN) + '" aria-label="Descargar ' + esc(j.name || 'video') + '">⬇ Descargar</a>'; h += '<button class="gallery-save" data-gallery-id="' + j.id + '">📱 Guardar en galería</button>'; }
+      if (['aprobado', 'publicado'].includes(tab) && j.status === 'listo') { h += '<button class="gallery-save" data-gallery-id="' + j.id + '">📱 Guardar en galería</button>'; }
       if (tab === 'aprobado' && j.status === 'listo') h += '<button class="mark-published" data-publish-id="' + j.id + '">✓ Marcar publicado</button>';
       h += '</div></div>';
     });
@@ -201,8 +199,8 @@ function drawList() {
   app.innerHTML = h;
   Array.prototype.forEach.call(app.querySelectorAll('.tabs button'), function (el) { el.onclick = function () { tab = el.getAttribute('data-tab'); drawList(); }; });
   Array.prototype.forEach.call(app.querySelectorAll('.item'), function (el) { el.onclick = function () { openJob(el.getAttribute('data-id')); }; });
-  Array.prototype.forEach.call(app.querySelectorAll('.item .download'), function (el) { el.onclick = function (event) { event.stopPropagation(); }; });
   Array.prototype.forEach.call(app.querySelectorAll('[data-gallery-id]'), function (el) { el.onclick = function (event) { event.stopPropagation(); saveToGallery(el.getAttribute('data-gallery-id'), el); }; });
+  rows.forEach(function (j) { if (['aprobado', 'publicado'].includes(tab) && j.status === 'listo') prefetchGallery(j.id); });
   Array.prototype.forEach.call(app.querySelectorAll('[data-publish-id]'), function (el) { el.onclick = function (event) {
     event.stopPropagation();
     var id = el.getAttribute('data-publish-id');
@@ -264,7 +262,7 @@ function render(d) {
   if (d.status === 'error') h += '<p class="msg">Hubo un error: ' + esc(d.error || '') + '</p>';
   var st = d.deleted ? 'eliminado' : (d.published ? 'publicado' : (d.approved ? 'aprobado' : 'pendiente'));
   h += '<div class="detail"><div id="previewWrap"><video id="v" controls playsinline src="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '&v=' + Date.now() + '"></video><video id="brollPreview" muted playsinline></video></div><div>';
-  if (['aprobado', 'publicado'].includes(st) && d.status === 'listo') { h += '<a class="download" href="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '">⬇ Descargar video</a> '; h += '<button class="gallery-save" id="gallerySave">📱 Guardar en galería</button>'; h += '<p class="legend">En el teléfono se abrirá el menú del sistema para elegir “Guardar video” o Fotos. El navegador requiere esa confirmación.</p>'; }
+  if (['aprobado', 'publicado'].includes(st) && d.status === 'listo') { h += '<button class="gallery-save" id="gallerySave">📱 Guardar en galería</button>'; h += '<p class="legend">En el teléfono se abrirá el menú del sistema para elegir “Guardar video” o Fotos. El navegador requiere esa confirmación. Si el primer toque falla, vuelve a tocar el botón (el video ya quedó preparado y la segunda vez funciona).</p>'; prefetchGallery(cur); }
   if (d.editable) {
     h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button><button id="m3">Mover tiempo</button></div>';
     h += '<div class="words" id="words"></div>';
@@ -379,21 +377,42 @@ function setMode(m) {
   document.getElementById('m3').className = m === 'mover' ? 'on' : '';
 }
 
-async function saveToGallery(id, button) {
-  if (!navigator.share || !navigator.canShare) { alert('Este navegador no permite enviar videos a la galería. Usa Descargar y luego guarda el video desde Descargas/Fotos.'); return; }
-  var oldText = button.textContent;
-  button.disabled = true; button.textContent = 'Preparando video…';
-  try {
-    var response = await fetch('/jobs/' + id + '/result?t=' + encodeURIComponent(TOKEN));
+var galleryFiles = {}; // id -> Promise<File>, precargado en segundo plano para no perder el permiso de compartir
+
+function fetchGalleryFile(id) {
+  return fetch('/jobs/' + id + '/result?t=' + encodeURIComponent(TOKEN)).then(function (response) {
     if (!response.ok) throw new Error('No se pudo descargar el video.');
-    var blob = await response.blob();
-    var disposition = response.headers.get('content-disposition') || '';
-    var match = disposition.match(/filename="?([^";]+)"?/i);
-    var file = new File([blob], match ? match[1] : 'b-edit-' + id + '.mp4', { type: 'video/mp4' });
+    return response.blob().then(function (blob) {
+      var disposition = response.headers.get('content-disposition') || '';
+      var match = disposition.match(/filename="?([^";]+)"?/i);
+      return new File([blob], match ? match[1] : 'b-edit-' + id + '.mp4', { type: 'video/mp4' });
+    });
+  });
+}
+
+function prefetchGallery(id) {
+  if (galleryFiles[id]) return;
+  galleryFiles[id] = fetchGalleryFile(id).catch(function (e) { delete galleryFiles[id]; throw e; });
+  galleryFiles[id].catch(function () {}); // evita "unhandled rejection" mientras nadie más lo espera todavía
+}
+
+async function saveToGallery(id, button) {
+  if (!navigator.share || !navigator.canShare) { alert('Este navegador no permite enviar videos a la galería.'); return; }
+  var oldText = button.textContent;
+  try {
+    var cached = galleryFiles[id];
+    var warm = !!cached;
+    if (!warm) { button.disabled = true; button.textContent = 'Preparando video…'; prefetchGallery(id); cached = galleryFiles[id]; }
+    var file = await cached;
+    if (!warm) { button.disabled = false; button.textContent = oldText; }
     if (!navigator.canShare({ files: [file] })) throw new Error('El teléfono no ofrece guardar este archivo desde el menú Compartir.');
     await navigator.share({ files: [file], title: 'Video editado' });
-  } catch (e) { if (e.name !== 'AbortError') alert(e.message || 'No se pudo abrir el menú para guardar el video.'); }
-  finally { button.disabled = false; button.textContent = oldText; }
+    delete galleryFiles[id];
+  } catch (e) {
+    button.disabled = false;
+    if (e && e.name === 'NotAllowedError') { button.textContent = '📱 Toca de nuevo para guardar'; }
+    else { button.textContent = oldText; if (!e || e.name !== 'AbortError') alert((e && e.message) || 'No se pudo abrir el menú para guardar el video.'); }
+  }
 }
 
 function setState(s) {

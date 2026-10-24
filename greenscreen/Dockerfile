@@ -21,5 +21,5 @@ ENV NODE_ENV=production PORT=8080 DATA_DIR=/data/green-screen \
     WHISPER_MODEL=small WHISPER_THREADS=2 X264_PRESET=veryfast X264_CRF=19 THREADS=2
 VOLUME /data
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://localhost:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "greenscreen/server.js"]

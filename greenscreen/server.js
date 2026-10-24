@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import Busboy from 'busboy';
 import { probe, extractAudio16k } from '../media.js';
 import { transcribe } from '../transcribe.js';
@@ -11,11 +13,21 @@ import { renderGreenScreen } from './render.js';
 
 const PORT=Number(process.env.PORT||8080), DATA=process.env.DATA_DIR||'/data/green-screen';
 const TOKEN=process.env.GREEN_SCREEN_TOKEN;
+const IMAGE_NORMALIZER=path.join(path.dirname(fileURLToPath(import.meta.url)),'normalize_image.py');
 if(!TOKEN||TOKEN.length<24){console.error('Falta GREEN_SCREEN_TOKEN (mínimo 24 caracteres)');process.exit(1);}
 const jobs=new Map(); let active=false; const queue=[];
 const send=(res,status,data)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
 const authorized=req=>{const a=Buffer.from((req.headers.authorization||'').replace(/^Bearer\s+/i,'')),b=Buffer.from(TOKEN);return a.length===b.length&&crypto.timingSafeEqual(a,b);};
 const safe=s=>String(s||'archivo').replace(/[^\w. -áéíóúñÁÉÍÓÚÑ]/g,'_').slice(0,90);
+const IMAGE_EXTS=new Set(['.jpg','.jpeg','.png','.webp','.heic','.heif','.avif','.tif','.tiff','.bmp','.gif']);
+
+async function normalizeImage(input,output){
+  await new Promise((resolve,reject)=>{
+    const p=spawn(process.env.PYTHON||'python3',[IMAGE_NORMALIZER,input,output]);let err='';
+    p.stderr.on('data',d=>{err=(err+d.toString()).slice(-2000)});
+    p.on('error',reject);p.on('close',code=>code===0?resolve():reject(new Error(err.trim()||'No se pudo convertir una imagen.')));
+  });
+}
 
 async function receive(req,dir){
   await fs.mkdir(dir,{recursive:true});
@@ -27,17 +39,17 @@ async function receive(req,dir){
       const imageMatch=field.match(/^image_(\d{1,2})$/),isImage=field==='image'||!!imageMatch;
       if(field!=='video'&&!isImage){stream.resume();return;}
       if(field==='video'&&!['.mp4','.mov','.m4v','.webm','.mkv'].includes(ext)){stream.resume();invalid=new Error('El video debe ser MP4, MOV, M4V, WebM o MKV.');return;}
-      if(isImage&&!['.jpg','.jpeg','.png','.webp'].includes(ext)){stream.resume();invalid=new Error('Las imágenes deben ser JPG, PNG o WebP.');return;}
+      if(isImage&&!IMAGE_EXTS.has(ext)){stream.resume();invalid=new Error('Formato de imagen no compatible. Usa JPG, PNG, WebP, HEIC/HEIF, AVIF, TIFF, BMP o GIF.');return;}
       if(field==='video'&&files.some(x=>x.field==='video')){stream.resume();invalid=new Error('Envía solo un archivo de cámara por trabajo.');return;}
       const index=isImage?(imageMatch?Number(imageMatch[1]):files.filter(x=>x.isImage).length+1):0;
       if(isImage&&(index<1||index>11||files.some(x=>x.isImage&&x.index===index))){stream.resume();invalid=new Error('Envía entre 1 y 11 imágenes, una vez cada una.');return;}
-      const name=`${isImage?'image-'+index:'camera'}${ext}`,target=path.join(dir,name),ws=createWriteStream(target);
+      const name=`${isImage?'image-'+index:'camera'}-original${ext}`,target=path.join(dir,name),ws=createWriteStream(target);
       const p=new Promise((r,j)=>{ws.on('finish',r);ws.on('error',j);stream.on('error',j);});
       stream.on('limit',()=>{tooBig=true;});
       stream.pipe(ws); files.push({field,isImage,index,name,sourceName:info.filename}); pending.push(p);
     });
     bb.on('filesLimit',()=>{invalid=new Error('Máximo 1 video y 11 imágenes por trabajo.');});
-    bb.on('close',async()=>{try{await Promise.all(pending);if(invalid)throw invalid;if(tooBig)throw new Error('Un archivo supera el límite de 2 GB.');const video=files.find(x=>x.field==='video'),allImages=files.filter(x=>x.isImage).sort((a,b)=>a.index-b.index);const requested=Number(fields.imageCount||fields.image_count||allImages.length);if(!video)throw new Error('Falta el archivo de cámara.');if(!Number.isInteger(requested)||requested<1||requested>11||allImages.length<requested)throw new Error('Agrega entre 1 y 11 imágenes válidas.');const selected=allImages.slice(0,requested);for(const extra of allImages.slice(requested))await fs.rm(path.join(dir,extra.name),{force:true});resolve({input:path.join(dir,video.name),images:selected.map(x=>path.join(dir,x.name)),fields,files:[video,...selected]});}catch(e){reject(e);}});
+    bb.on('close',async()=>{try{await Promise.all(pending);if(invalid)throw invalid;if(tooBig)throw new Error('Un archivo supera el límite de 2 GB.');const video=files.find(x=>x.field==='video'),allImages=files.filter(x=>x.isImage).sort((a,b)=>a.index-b.index);const requested=Number(fields.imageCount||fields.image_count||allImages.length);if(!video)throw new Error('Falta el archivo de cámara.');if(!Number.isInteger(requested)||requested<1||requested>11||allImages.length<requested)throw new Error('Agrega entre 1 y 11 imágenes válidas.');const selected=allImages.slice(0,requested);for(const extra of allImages.slice(requested))await fs.rm(path.join(dir,extra.name),{force:true});const normalized=[];for(const image of selected){const out=path.join(dir,`image-${image.index}.jpg`);await normalizeImage(path.join(dir,image.name),out);normalized.push(out);}resolve({input:path.join(dir,video.name),images:normalized,fields,files:[video,...selected]});}catch(e){reject(e);}});
     bb.on('error',reject);req.pipe(bb);
   });
 }

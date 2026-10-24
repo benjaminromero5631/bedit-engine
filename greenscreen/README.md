@@ -9,7 +9,7 @@ In Drive, each Green Screen project is one subfolder inside `B Edit / Green Scre
 `POST /jobs` (multipart, `Authorization: Bearer <GREEN_SCREEN_TOKEN>`):
 
 - `video`: one camera recording (MP4/MOV/M4V/WebM/MKV, up to 2 GB, max 125 s).
-- `image`: one or more vertical JPG/PNG/WebP background images (repeat the field), or numbered fields `image_1` through `image_11`.
+- `image`: one or more vertical JPG/PNG/WebP/HEIC/HEIF/AVIF/TIFF/BMP/GIF background images (repeat the field), or numbered fields `image_1` through `image_11`. Images are normalized to upright JPEG automatically; the first frame is used for animated images.
 - `imageCount` (optional when sending numbered fields): number of actual images to use. This lets fixed-field workflow tools pad unused slots without treating the duplicates as extra backgrounds.
 - `name` (optional) and `callbackUrl` (optional).
 
@@ -25,6 +25,10 @@ The first six final seconds use a 2×2 collage made from the first four images (
 - `GREEN_SCREEN_TOKEN` is a separate secret from `BEDIT_TOKEN`.
 - For music sharing, prefer a read-only mount and restrict the code to the music directory. Do not mount the B Edit volume read-write.
 - Do not point the B Edit service at this Dockerfile or storage volume.
+
+## Drive retention
+
+The engine keeps source files, normalized images, the cut plan, and the rendered result in its isolated volume for `RETENTION_DAYS` (7 days by default), then removes the job directory. This is temporary processing storage, not a long-term archive. The Drive automation should move successful project folders into a recoverable `Procesados` archive and retain the result in `Borradores`; failed projects should remain available for retry in `Errores`. Do not delete source assets automatically.
 
 ## Draft caveat
 

@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir \
-      faster-whisper 'av<19' 'mediapipe==0.10.21' 'Pillow>=10,<12' numpy
+      faster-whisper 'av<19' 'mediapipe==0.10.21' 'Pillow>=10,<12' pillow-heif numpy
 ENV PYTHON=/opt/venv/bin/python3
 
 WORKDIR /app
@@ -13,6 +13,7 @@ COPY greenscreen/package.json greenscreen/package-lock.json ./
 RUN npm install --omit=dev
 COPY greenscreen/server.js ./greenscreen/server.js
 COPY greenscreen/segment.py ./greenscreen/segment.py
+COPY greenscreen/normalize_image.py ./greenscreen/normalize_image.py
 COPY greenscreen/render.js ./greenscreen/render.js
 COPY media.js transcribe.js transcribe.py cuts.js plan.js config.js draw.js ./
 

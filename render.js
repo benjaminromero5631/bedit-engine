@@ -111,7 +111,7 @@ async function musicAudioFilter(music, outDur, voiceLabel, musicIdx) {
   const gain = Math.max(-30, Math.min(30, -14 - MUSIC_BELOW_DB - Number(mm.input_i)));
   const musicArgs = ['-stream_loop', '-1', '-i', music.path];
   const filter = `[${musicIdx}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:${f4(outDur)},asetpts=PTS-STARTPTS,volume=${gain.toFixed(2)}dB,`
-    + `afade=t=in:st=0:d=0.05,afade=t=out:st=${f4(Math.max(0, outDur - 1))}:d=1[m];`
+    + `afade=t=in:st=0:d=0.01,afade=t=out:st=${f4(Math.max(0, outDur - 1))}:d=1[m];`
     + `[${voiceLabel}]aresample=48000,aformat=channel_layouts=stereo[v];[v][m]amix=inputs=2:duration=first:dropout_transition=0,volume=2,alimiter=limit=0.89:level=disabled[aout]`;
   return { filter, musicArgs };
 }

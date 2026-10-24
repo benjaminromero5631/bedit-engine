@@ -78,7 +78,7 @@ async function work(job){
     await fs.writeFile(path.join(job.dir,'plan.json'),JSON.stringify({info,words:plan.words,fillers:plan.fillers,cuts:plan.cuts,keep:plan.keep,stats:job.stats},null,2));
   }catch(e){job.status='error';job.error=String(e.message||e).slice(0,500);}
   job.updatedAt=new Date().toISOString();await saveJob(job);
-  if(job.callbackUrl){for(let i=0;i<5;i++){try{const r=await fetch(job.callbackUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:job.id,name:job.name,status:job.status,error:job.error||null,stats:job.stats||null,resultUrl:`/jobs/${job.id}/result`}),signal:AbortSignal.timeout(20000)});if(r.ok)break;throw new Error(`HTTP ${r.status}`);}catch(e){console.error('callback falló',e.message);if(i<4)await new Promise(r=>setTimeout(r,5000*(i+1)));}}}
+  if(job.callbackUrl){for(let i=0;i<5;i++){try{const r=await fetch(job.callbackUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:job.id,name:job.name,meta:job.meta||{},status:job.status,error:job.error||null,stats:job.stats||null,resultUrl:`/jobs/${job.id}/result`}),signal:AbortSignal.timeout(20000)});if(r.ok)break;throw new Error(`HTTP ${r.status}`);}catch(e){console.error('callback falló',e.message);if(i<4)await new Promise(r=>setTimeout(r,5000*(i+1)));}}}
 }
 async function pump(){if(active)return;active=true;while(queue.length){const j=queue.shift();await work(j);}active=false;}
 
@@ -89,7 +89,7 @@ const server=http.createServer(async(req,res)=>{
     if(!authorized(req))return send(res,401,{error:'No autorizado'});
     if(p==='/jobs'&&req.method==='POST'){
       const id=crypto.randomBytes(8).toString('hex'),dir=path.join(DATA,'jobs',id);await fs.mkdir(dir,{recursive:true});
-      const received=await receive(req,dir);const job={id,dir,input:received.input,images:received.images,name:safe(received.fields.name||path.basename(received.files.find(x=>x.field==='video').sourceName,path.extname(received.files.find(x=>x.field==='video').sourceName))),callbackUrl:received.fields.callbackUrl||null,status:'en cola',createdAt:new Date().toISOString()};
+      const received=await receive(req,dir);let meta={};try{meta=JSON.parse(received.fields.meta||'{}');}catch{}const job={id,dir,input:received.input,images:received.images,meta,name:safe(received.fields.name||path.basename(received.files.find(x=>x.field==='video').sourceName,path.extname(received.files.find(x=>x.field==='video').sourceName))),callbackUrl:received.fields.callbackUrl||null,status:'en cola',createdAt:new Date().toISOString()};
       jobs.set(id,job);await fs.writeFile(path.join(dir,'job.json'),JSON.stringify(job));queue.push(job);pump();return send(res,202,{id,status:job.status,name:job.name});
     }
     const m=p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|plan))?$/);

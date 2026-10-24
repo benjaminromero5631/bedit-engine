@@ -200,7 +200,7 @@ function drawList() {
   Array.prototype.forEach.call(app.querySelectorAll('.tabs button'), function (el) { el.onclick = function () { tab = el.getAttribute('data-tab'); drawList(); }; });
   Array.prototype.forEach.call(app.querySelectorAll('.item'), function (el) { el.onclick = function () { openJob(el.getAttribute('data-id')); }; });
   Array.prototype.forEach.call(app.querySelectorAll('[data-gallery-id]'), function (el) { el.onclick = function (event) { event.stopPropagation(); saveToGallery(el.getAttribute('data-gallery-id'), el); }; });
-  rows.forEach(function (j) { if (['aprobado', 'publicado'].includes(tab) && j.status === 'listo') prefetchGallery(j.id); });
+  observeGalleryButtons();
   Array.prototype.forEach.call(app.querySelectorAll('[data-publish-id]'), function (el) { el.onclick = function (event) {
     event.stopPropagation();
     var id = el.getAttribute('data-publish-id');
@@ -378,6 +378,7 @@ function setMode(m) {
 }
 
 var galleryFiles = {}; // id -> Promise<File>, precargado en segundo plano para no perder el permiso de compartir
+var galleryQueue = [], galleryActive = 0, GALLERY_MAX_CONCURRENT = 1, GALLERY_MAX_CACHED = 3, galleryOrder = [];
 
 function fetchGalleryFile(id) {
   return fetch('/jobs/' + id + '/result?t=' + encodeURIComponent(TOKEN)).then(function (response) {
@@ -390,10 +391,36 @@ function fetchGalleryFile(id) {
   });
 }
 
-function prefetchGallery(id) {
-  if (galleryFiles[id]) return;
-  galleryFiles[id] = fetchGalleryFile(id).catch(function (e) { delete galleryFiles[id]; throw e; });
+function pumpGalleryQueue() {
+  if (galleryActive >= GALLERY_MAX_CONCURRENT || !galleryQueue.length) return;
+  var id = galleryQueue.shift();
+  if (galleryFiles[id]) { pumpGalleryQueue(); return; }
+  galleryActive++;
+  galleryFiles[id] = fetchGalleryFile(id)
+    .catch(function (e) { delete galleryFiles[id]; throw e; })
+    .finally(function () { galleryActive--; pumpGalleryQueue(); });
   galleryFiles[id].catch(function () {}); // evita "unhandled rejection" mientras nadie más lo espera todavía
+  galleryOrder.push(id);
+  while (galleryOrder.length > GALLERY_MAX_CACHED) { var old = galleryOrder.shift(); if (old !== id) delete galleryFiles[old]; }
+}
+
+// Precarga en segundo plano, con concurrencia limitada: evita que varios videos
+// completos se descarguen a la vez y agoten memoria/red en el teléfono ("Load failed").
+function prefetchGallery(id) {
+  if (galleryFiles[id] || galleryQueue.indexOf(id) !== -1) return;
+  galleryQueue.push(id);
+  pumpGalleryQueue();
+}
+
+var galleryObserver = null;
+function observeGalleryButtons() {
+  var buttons = app.querySelectorAll('[data-gallery-id]');
+  if (!('IntersectionObserver' in window)) { Array.prototype.forEach.call(buttons, function (el) { prefetchGallery(el.getAttribute('data-gallery-id')); }); return; }
+  if (galleryObserver) galleryObserver.disconnect();
+  galleryObserver = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) { if (entry.isIntersecting) { prefetchGallery(entry.target.getAttribute('data-gallery-id')); galleryObserver.unobserve(entry.target); } });
+  }, { rootMargin: '200px' });
+  Array.prototype.forEach.call(buttons, function (el) { galleryObserver.observe(el); });
 }
 
 async function saveToGallery(id, button) {
@@ -402,7 +429,12 @@ async function saveToGallery(id, button) {
   try {
     var cached = galleryFiles[id];
     var warm = !!cached;
-    if (!warm) { button.disabled = true; button.textContent = 'Preparando video…'; prefetchGallery(id); cached = galleryFiles[id]; }
+    if (!warm) {
+      button.disabled = true; button.textContent = 'Preparando video…';
+      var qi = galleryQueue.indexOf(id); if (qi !== -1) galleryQueue.splice(qi, 1); // toque directo del usuario: no esperar en la cola de fondo
+      cached = galleryFiles[id] = fetchGalleryFile(id).catch(function (e) { delete galleryFiles[id]; throw e; });
+      cached.catch(function () {});
+    }
     var file = await cached;
     if (!warm) { button.disabled = false; button.textContent = oldText; }
     if (!navigator.canShare({ files: [file] })) throw new Error('El teléfono no ofrece guardar este archivo desde el menú Compartir.');

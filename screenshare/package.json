@@ -1,0 +1,8 @@
+{
+  "name": "bedit-screenshare-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node screenshare/server.js" },
+  "dependencies": { "@napi-rs/canvas": "^0.1.80", "busboy": "^1.6.0" }
+}

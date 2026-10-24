@@ -1,6 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -95,7 +95,7 @@ const server=http.createServer(async(req,res)=>{
     const m=p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|plan))?$/);
     if(m){let j=jobs.get(m[1]);if(!j){try{j=JSON.parse(await fs.readFile(path.join(DATA,'jobs',m[1],'job.json'),'utf8'));jobs.set(m[1],j);}catch{return send(res,404,{error:'No existe el trabajo'});}}if(req.method==='GET'&&!m[2])return send(res,200,{id:j.id,name:j.name,status:j.status,error:j.error||null,stats:j.stats||null});
       if(req.method==='GET'&&m[2]==='plan'){try{res.writeHead(200,{'content-type':'application/json'});return res.end(await fs.readFile(path.join(j.dir,'plan.json')));}catch{return send(res,409,{error:'El plan aún no está disponible'});}}
-      if(req.method==='GET'&&m[2]==='result'&&j.status==='listo'){res.writeHead(200,{'content-type':'video/mp4','content-disposition':`attachment; filename="${j.name}_greenscreen.mp4"`});return fs.createReadStream(path.join(j.dir,'result.mp4')).pipe(res);}
+      if(req.method==='GET'&&m[2]==='result'&&j.status==='listo'){res.writeHead(200,{'content-type':'video/mp4','content-disposition':`attachment; filename="${j.name}_greenscreen.mp4"`});return createReadStream(path.join(j.dir,'result.mp4')).pipe(res);}
       return send(res,409,{error:'El resultado aún no está disponible'});
     }
     return send(res,404,{error:'Ruta no encontrada'});

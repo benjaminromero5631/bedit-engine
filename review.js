@@ -190,7 +190,7 @@ function drawList() {
     rows.forEach(function (j) {
       var st = j.status === 'listo' ? '<span class="tag ok">listo</span>' : '<span class="tag">' + esc(j.status) + (j.progress ? ' ' + Math.round(j.progress * 100) + '%' : '') + '</span>';
       h += '<div class="item" data-id="' + j.id + '"><div class="item-info">' + esc(j.name || j.id) + '<br><small>' + new Date(j.createdAt).toLocaleString('es-CL') + '</small></div><div class="item-actions">' + st;
-      if (['aprobado', 'publicado'].includes(tab) && j.status === 'listo') { h += '<button class="gallery-save" data-gallery-id="' + j.id + '">📱 Guardar en galería</button>'; }
+      if (['aprobado', 'publicado'].includes(tab) && j.status === 'listo') { h += '<button class="gallery-save" data-gallery-id="' + j.id + '">📱 Guardar en galería</button>'; h += '<a class="gallery-save" href="/jobs/' + j.id + '/result?t=' + encodeURIComponent(TOKEN) + '" download>⬇️ Descargar</a>'; }
       if (tab === 'aprobado' && j.status === 'listo') h += '<button class="mark-published" data-publish-id="' + j.id + '">✓ Marcar publicado</button>';
       h += '</div></div>';
     });
@@ -262,7 +262,7 @@ function render(d) {
   if (d.status === 'error') h += '<p class="msg">Hubo un error: ' + esc(d.error || '') + '</p>';
   var st = d.deleted ? 'eliminado' : (d.published ? 'publicado' : (d.approved ? 'aprobado' : 'pendiente'));
   h += '<div class="detail"><div id="previewWrap"><video id="v" controls playsinline src="/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '&v=' + Date.now() + '"></video><video id="brollPreview" muted playsinline></video></div><div>';
-  if (['aprobado', 'publicado'].includes(st) && d.status === 'listo') { h += '<button class="gallery-save" id="gallerySave">📱 Guardar en galería</button>'; h += '<p class="legend">En el teléfono se abrirá el menú del sistema para elegir “Guardar video” o Fotos. El navegador requiere esa confirmación. Si el primer toque falla, vuelve a tocar el botón (el video ya quedó preparado y la segunda vez funciona).</p>'; prefetchGallery(cur); }
+  if (['aprobado', 'publicado'].includes(st) && d.status === 'listo') { h += '<button class=”gallery-save” id=”gallerySave”>📱 Guardar en galería</button>'; h += '<a class=”gallery-save” href=”/jobs/' + cur + '/result?t=' + encodeURIComponent(TOKEN) + '” download>⬇️ Descargar</a>'; h += '<p class=”legend”>En el teléfono se abrirá el menú del sistema para elegir “Guardar video” o Fotos. El navegador requiere esa confirmación. Si el primer toque falla, vuelve a tocar el botón (el video ya quedó preparado y la segunda vez funciona).</p>'; prefetchGallery(cur); }
   if (d.editable) {
     h += '<div class="mode"><button id="m1">Quitar palabras</button><button id="m2">Editar texto</button><button id="m3">Mover tiempo</button></div>';
     h += '<div class="words" id="words"></div>';

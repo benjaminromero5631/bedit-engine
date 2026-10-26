@@ -190,6 +190,30 @@ const server = http.createServer(async (req, res) => {
       }
       return send(res, 202, { ok: true, queued, skipped, sensitivity: 'fuerte' });
     }
+    if (p === '/jobs/import' && req.method === 'POST') {
+      // Registra un video ya procesado externamente (ej: pantalla compartida desde screenshare-engine)
+      // directamente como 'listo', sin pasar por el pipeline de bedit.
+      const { job, dir } = await createJob({ ext: '.mp4' });
+      try {
+        // El endpoint /result sirve final.mp4, así que guardamos el archivo con ese nombre.
+        const { fields, filename } = await receiveFile(req, path.join(dir, 'final.mp4'), 'video');
+        let meta = null;
+        if (fields.meta) { try { meta = JSON.parse(fields.meta); } catch { meta = fields.meta; } }
+        const format = fields.format || 'pantalla-compartida';
+        const name = safeName(fields.name || filename);
+        await updateJob(job.id, {
+          meta, format, name,
+          status: 'listo', progress: 1,
+          input: 'final.mp4',
+          kind: 'import',
+          stats: {},
+        });
+        return send(res, 201, { id: job.id, status: 'listo' });
+      } catch (e) {
+        await fsp.rm(dir, { recursive: true, force: true });
+        return send(res, 400, { error: e.message });
+      }
+    }
     if (p === '/jobs' && req.method === 'POST') {
       const { job, dir } = await createJob({ ext: '.mov' });
       try {

@@ -104,7 +104,7 @@ button.dng{color:var(--usr)}
 var TOKEN = '';
 try { TOKEN = localStorage.getItem('bedit_token') || ''; } catch (e) {}
 var app = document.getElementById('app');
-var cur = null, removed = {}, restored = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [], listNotice = '', brollClips = [], brollSuggestions = [], brollEvents = [], brollPreviewEvent = null;
+var cur = null, removed = {}, restored = {}, edits = {}, times = {}, manualCuts = [], words = [], poll = null, dirty = false, tab = 'pendiente', mode = 'quitar', lastJobs = [], listNotice = '', brollClips = [], brollSuggestions = [], brollEvents = [], brollPreviewEvent = null, formatFilter = 'talking-head';
 var tlPxPerSec = 0, tlDur = 0, tlKeep = [];
 
 function api(path, opts) {
@@ -171,19 +171,24 @@ function loadBrollLibrary() {
   }).catch(function (e) { box.innerHTML = '<p class="msg">No se pudo cargar la biblioteca: ' + esc(e.message) + '</p>'; });
 }
 function drawList() {
+  var formatJobs = lastJobs.filter(function (j) { return (j.format || 'talking-head') === formatFilter; });
   var counts = { pendiente: 0, aprobado: 0, publicado: 0, eliminado: 0 };
-  lastJobs.forEach(function (j) { counts[stateOf(j)]++; });
+  formatJobs.forEach(function (j) { counts[stateOf(j)]++; });
   var names = { pendiente: 'Pendientes', aprobado: 'Listos', publicado: 'Publicados', eliminado: 'Eliminados' };
+  var formatNames = { 'talking-head': '🎙 Talking Head', 'pantalla-compartida': '🖥 Pantalla Compartida' };
   var h = '';
   if (listNotice) { h += '<p class="msg">' + esc(listNotice) + '</p>'; listNotice = ''; }
+  h += '<div class="tabs" style="margin-bottom:8px">';
+  ['talking-head', 'pantalla-compartida'].forEach(function (f) { h += '<button data-format="' + f + '"' + (formatFilter === f ? ' class="on"' : '') + '>' + formatNames[f] + '</button>'; });
+  h += '</div>';
   h += '<div class="list-tools"><div class="tabs">';
   ['pendiente', 'aprobado', 'publicado', 'eliminado'].forEach(function (k) { h += '<button data-tab="' + k + '"' + (tab === k ? ' class="on"' : '') + '>' + names[k] + ' (' + counts[k] + ')</button>'; });
   h += '</div>';
   if (tab === 'eliminado') h += '<button id="clearDeleted" class="clear-deleted">Limpiar historial</button>';
-  var recutCount = lastJobs.filter(function (j) { return stateOf(j) === 'pendiente' && j.status === 'listo'; }).length;
+  var recutCount = formatJobs.filter(function (j) { return stateOf(j) === 'pendiente' && j.status === 'listo'; }).length;
   if (tab === 'pendiente' && recutCount) h += '<button id="recutPending" class="recut-pending">Aplicar cortes más fuertes (' + recutCount + ')</button>';
   h += '</div>';
-  var rows = lastJobs.filter(function (j) { return stateOf(j) === tab; });
+  var rows = formatJobs.filter(function (j) { return stateOf(j) === tab; });
   if (!rows.length) h += '<p class="msg">No hay videos aquí.</p>';
   else {
     h += '<div class="list">';
@@ -197,7 +202,8 @@ function drawList() {
     h += '</div>';
   }
   app.innerHTML = h;
-  Array.prototype.forEach.call(app.querySelectorAll('.tabs button'), function (el) { el.onclick = function () { tab = el.getAttribute('data-tab'); drawList(); }; });
+  Array.prototype.forEach.call(app.querySelectorAll('.tabs button[data-format]'), function (el) { el.onclick = function () { formatFilter = el.getAttribute('data-format'); tab = 'pendiente'; drawList(); }; });
+  Array.prototype.forEach.call(app.querySelectorAll('.tabs button[data-tab]'), function (el) { el.onclick = function () { tab = el.getAttribute('data-tab'); drawList(); }; });
   Array.prototype.forEach.call(app.querySelectorAll('.item'), function (el) { el.onclick = function () { openJob(el.getAttribute('data-id')); }; });
   Array.prototype.forEach.call(app.querySelectorAll('[data-gallery-id]'), function (el) { el.onclick = function (event) { event.stopPropagation(); saveToGallery(el.getAttribute('data-gallery-id'), el); }; });
   observeGalleryButtons();

@@ -198,7 +198,8 @@ const server = http.createServer(async (req, res) => {
         try { options = fields.options ? JSON.parse(fields.options) : {}; } catch { throw new Error('"options" no es JSON válido'); }
         let meta = null;
         if (fields.meta) { try { meta = JSON.parse(fields.meta); } catch { meta = fields.meta; } }
-        await updateJob(job.id, { options, meta, callbackUrl: fields.callbackUrl || null, name: safeName(fields.name || filename) });
+        const format = fields.format || 'talking-head';
+        await updateJob(job.id, { options, meta, callbackUrl: fields.callbackUrl || null, name: safeName(fields.name || filename), format });
         await enqueue(job.id);
         return send(res, 202, { id: job.id, status: 'en cola' });
       } catch (e) {
@@ -208,7 +209,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/jobs' && req.method === 'GET') {
       const out = [];
-      for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, approved: !!j.approved, published: !!j.published, deleted: !!j.deleted, createdAt: j.createdAt }); }
+      for (const id of (await fsp.readdir(JOBS)).slice(-50)) { const j = await readJob(id); if (j) out.push({ id, status: j.status, progress: j.progress, name: j.name, approved: !!j.approved, published: !!j.published, deleted: !!j.deleted, createdAt: j.createdAt, format: j.format || 'talking-head' }); }
       return send(res, 200, { jobs: out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) });
     }
     if (p === '/jobs/clear-deleted' && req.method === 'POST') {

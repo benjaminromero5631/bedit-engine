@@ -13,7 +13,8 @@ import { run, lowPriority, alignFilter, measureLoudnorm, integratedLufs } from '
 
 const FPS = 30, W = 1080, H = 1920;
 // Plantilla fija: cámara arriba, franja central para subtítulos, pantalla abajo.
-const CAM_H = 820, BAR_H = 280, SCREEN_H = 820; // 820 + 280 + 820 = 1920
+// Franja más angosta y paneles más grandes (ambos del mismo tamaño, siempre en la misma posición).
+const CAM_H = 865, BAR_H = 190, SCREEN_H = 865; // 865 + 190 + 865 = 1920
 const BAR_Y = CAM_H; // y donde empieza la franja
 const f4 = (x) => Number(x).toFixed(5);
 

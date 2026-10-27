@@ -126,7 +126,7 @@ async function notify(job) {
 }
 
 /** Aviso al celular (ntfy). Solo si existe NTFY_TOPIC en el entorno. */
-async function push(job) {
+export async function push(job) {
   const topic = process.env.NTFY_TOPIC;
   if (!topic) return;
   const ok = job.status === 'listo';

@@ -9,7 +9,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import Busboy from 'busboy';
-import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, JOBS, MUSIC, BROLL } from './jobs.js';
+import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
@@ -208,6 +208,7 @@ const server = http.createServer(async (req, res) => {
           kind: 'import',
           stats: {},
         });
+        push({ id: job.id, name, status: 'listo' }).catch(() => {});
         return send(res, 201, { id: job.id, status: 'listo' });
       } catch (e) {
         await fsp.rm(dir, { recursive: true, force: true });

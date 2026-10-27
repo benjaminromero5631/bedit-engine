@@ -34,20 +34,23 @@ export function quantizeKeep(keep, duration) {
   return { segs, frames: o, keep: segs.map((s) => ({ s: s.sf / FPS, e: s.ef / FPS, o: s.of / FPS })) };
 }
 
-function cover(info) {
-  // Ajusta "cubriendo" el panel (igual lógica que el motor principal), por panel.
+function contain(info) {
+  // Ajusta "conteniendo" el panel (sin recortar nada del encuadre original);
+  // lo que sobra de espacio se rellena en negro.
   return (panelW, panelH) => {
-    const base = Math.max(panelW / info.width, panelH / info.height);
+    const base = Math.min(panelW / info.width, panelH / info.height);
     return { W0: info.width * base, H0: info.height * base };
   };
 }
 
-/** [idx:v] → panel WxpanelH, respetando los mismos cortes `sel`. */
+/** [idx:v] → panel WxpanelH, respetando los mismos cortes `sel`. Respeta el encuadre
+ * original del video (sin zoom/recorte); rellena en negro lo que sobre del panel. */
 function panelGraph(idx, info, sel, panelW, panelH, label) {
-  const { W0, H0 } = cover(info)(panelW, panelH);
+  const { W0, H0 } = contain(info)(panelW, panelH);
+  const w2 = Math.round(W0 / 2) * 2, h2 = Math.round(H0 / 2) * 2;
   return `[${idx}:v]setpts=PTS-STARTPTS,fps=${FPS},select='${sel}',setpts=N/(${FPS}*TB),`
-    + `scale=w=${Math.round(W0 / 2) * 2}:h=${Math.round(H0 / 2) * 2}:flags=bicubic,`
-    + `crop=${panelW}:${panelH}:(${Math.round(W0 / 2) * 2}-${panelW})/2:(${Math.round(H0 / 2) * 2}-${panelH})/2,`
+    + `scale=w=${w2}:h=${h2}:flags=bicubic,`
+    + `pad=${panelW}:${panelH}:(${panelW}-${w2})/2:(${panelH}-${h2})/2:color=black,`
     + `setsar=1,format=yuv420p[${label}]`;
 }
 

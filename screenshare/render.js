@@ -15,13 +15,18 @@ const FPS = 30, W = 1080;
 // Cámara arriba, franja central (solo subtítulos) y pantalla abajo. Cada panel se dimensiona
 // según la proporción real de su video (ancho W, alto = lo que le corresponda): así no sobra
 // espacio negro dentro del panel y la franja del medio es nada más el espacio del subtítulo.
-const BAR_H = 190;
 const f4 = (x) => Number(x).toFixed(5);
 /** Alto del panel para que el video quepa completo en el ancho W, sin recortar ni rellenar. */
 function fitHeight(info) {
   const h = Math.round((W * info.height) / info.width / 2) * 2;
   // límites razonables para que un video muy panorámico o muy vertical no desarme el layout
   return Math.max(Math.round(W * 0.3 / 2) * 2, Math.min(Math.round(W * 1.9 / 2) * 2, h));
+}
+/** Franja más angosta posible que todavía deja espacio cómodo para hasta 2 líneas de subtítulo
+ * (el tamaño de letra escala con el alto total, así que esto se calcula en función de los paneles). */
+function barHeight(camH, screenH) {
+  const h = Math.round(((camH + screenH) * 0.09) / 2) * 2;
+  return Math.max(110, Math.min(160, h));
 }
 
 /** Tramos que se quedan, alineados a 30 fps (igual criterio que el motor principal). */
@@ -85,6 +90,7 @@ export async function renderScreenShare({ cameraInput, screenInput, dir, cameraI
   const { voice } = await buildVoice(dir, cameraInput, cameraInfo, q);
 
   const CAM_H = fitHeight(cameraInfo), SCREEN_H = fitHeight(screenInfo);
+  const BAR_H = barHeight(CAM_H, SCREEN_H);
   const BAR_Y = CAM_H;
   const H = CAM_H + BAR_H + SCREEN_H;
   const sel = q.segs.map((s) => `between(n,${s.sf},${s.ef - 1})`).join('+');

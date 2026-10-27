@@ -49,12 +49,21 @@ async function receive(req, dir) {
     bb.on('error', reject); req.pipe(bb);
   });
 }
-async function defaultMusic() {
+const BEDIT_URL = process.env.BEDIT_INTERNAL_URL || 'http://godkeys_bedit-engine:8080';
+const BEDIT_TOKEN = process.env.BEDIT_TOKEN || '';
+
+/** Descarga la pista de música por defecto desde bedit-engine por HTTP (no comparten disco/volumen).
+ * Se guarda una copia por trabajo en su propia carpeta, así que no hay conflicto entre trabajos simultáneos. */
+async function defaultMusic(dir) {
+  if (!BEDIT_TOKEN) return null;
   try {
-    const state = JSON.parse(await fs.readFile(process.env.MUSIC_STATE || '/bedit-data/state.json', 'utf8'));
-    const dir = process.env.MUSIC_DIR || '/bedit-data/music';
-    if (state.defaultMusic) { const p = path.join(dir, path.basename(state.defaultMusic)); await fs.access(p); return p; }
-    return null;
+    const r = await fetch(`${BEDIT_URL}/music/default/file`, { headers: { authorization: `Bearer ${BEDIT_TOKEN}` }, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) return null;
+    const type = r.headers.get('content-type') || '';
+    const ext = { 'audio/mpeg': '.mp3', 'audio/mp4': '.m4a', 'audio/wav': '.wav', 'audio/aac': '.aac', 'audio/ogg': '.ogg', 'audio/flac': '.flac' }[type] || '.mp3';
+    const target = path.join(dir, `music-default${ext}`);
+    await fs.writeFile(target, Buffer.from(await r.arrayBuffer()));
+    return target;
   } catch { return null; }
 }
 async function saveJob(job) { await fs.writeFile(path.join(job.dir, 'job.json'), JSON.stringify(job)); }
@@ -73,7 +82,7 @@ async function work(job) {
     const chunks = await transcribe(wav, job.dir);
     const plan = makePlan({ audio16k: audio, chunks, duration, sensitivity: 'fuerte' });
     job.status = 'renderizando'; job.updatedAt = new Date().toISOString(); await saveJob(job);
-    const musicPath = await defaultMusic();
+    const musicPath = await defaultMusic(job.dir);
     const stats = await renderScreenShare({ cameraInput: job.camera, screenInput: job.screen, dir: job.dir, cameraInfo: camInfo, screenInfo: scrInfo, plan, musicPath });
     const uncertain = (plan.words || []).filter((w) => Number.isFinite(w.confidence) && w.confidence < 0.55).length;
     job.status = 'listo';
@@ -114,10 +123,22 @@ const server = http.createServer(async (req, res) => {
       jobs.set(id, job); await fs.writeFile(path.join(dir, 'job.json'), JSON.stringify(job)); queue.push(job); pump();
       return send(res, 202, { id, status: job.status, name: job.name });
     }
-    const m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|plan))?$/);
+    const m = p.match(/^\/jobs\/([a-f0-9]{16})(?:\/(result|plan|rerender))?$/);
     if (m) {
       let j = jobs.get(m[1]);
       if (!j) { try { j = JSON.parse(await fs.readFile(path.join(DATA, 'jobs', m[1], 'job.json'), 'utf8')); jobs.set(m[1], j); } catch { return send(res, 404, { error: 'No existe el trabajo' }); } }
+      if (req.method === 'POST' && m[2] === 'rerender') {
+        // Vuelve a procesar el mismo trabajo desde los archivos originales ya guardados
+        // (camera-original.*/screen-original.*), sin pedirle al usuario que los suba de nuevo.
+        try { await fs.access(j.camera); await fs.access(j.screen); }
+        catch { return send(res, 409, { error: 'Ya no están los archivos originales de este trabajo; hay que subirlos de nuevo.' }); }
+        if (j.status === 'en cola' || j.status === 'analizando' || j.status === 'transcribiendo' || j.status === 'renderizando') {
+          return send(res, 409, { error: 'Este trabajo ya se está procesando.' });
+        }
+        j.status = 'en cola'; j.error = null; j.stats = null;
+        jobs.set(j.id, j); await saveJob(j); queue.push(j); pump();
+        return send(res, 202, { id: j.id, status: j.status });
+      }
       if (req.method === 'GET' && !m[2]) return send(res, 200, { id: j.id, name: j.name, status: j.status, error: j.error || null, stats: j.stats || null });
       if (req.method === 'GET' && m[2] === 'plan') { try { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(await fs.readFile(path.join(j.dir, 'plan.json'))); } catch { return send(res, 409, { error: 'El plan aún no está disponible' }); } }
       if (req.method === 'GET' && m[2] === 'result' && j.status === 'listo') { res.writeHead(200, { 'content-type': 'video/mp4', 'content-disposition': `attachment; filename="${j.name}_screenshare.mp4"` }); return createReadStream(path.join(j.dir, 'result.mp4')).pipe(res); }

@@ -15,7 +15,7 @@ COPY media.js transcribe.js transcribe.py cuts.js plan.js config.js draw.js ./
 COPY *.woff2 ./fonts/
 
 ENV NODE_ENV=production PORT=8080 DATA_DIR=/data/screenshare \
-    MUSIC_DIR=/bedit-data/music MUSIC_STATE=/bedit-data/state.json \
+    BEDIT_INTERNAL_URL=http://godkeys_bedit-engine:8080 \
     WHISPER_MODEL=small X264_PRESET=veryfast X264_CRF=19
 VOLUME /data
 EXPOSE 8080

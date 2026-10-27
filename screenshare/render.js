@@ -11,12 +11,18 @@ import { outToSrc } from '../cuts.js';
 import { registerFonts } from './fonts.js';
 import { run, lowPriority, alignFilter, measureLoudnorm, integratedLufs } from '../media.js';
 
-const FPS = 30, W = 1080, H = 1920;
-// Plantilla fija: cámara arriba, franja central para subtítulos, pantalla abajo.
-// Franja más angosta y paneles más grandes (ambos del mismo tamaño, siempre en la misma posición).
-const CAM_H = 865, BAR_H = 190, SCREEN_H = 865; // 865 + 190 + 865 = 1920
-const BAR_Y = CAM_H; // y donde empieza la franja
+const FPS = 30, W = 1080;
+// Cámara arriba, franja central (solo subtítulos) y pantalla abajo. Cada panel se dimensiona
+// según la proporción real de su video (ancho W, alto = lo que le corresponda): así no sobra
+// espacio negro dentro del panel y la franja del medio es nada más el espacio del subtítulo.
+const BAR_H = 190;
 const f4 = (x) => Number(x).toFixed(5);
+/** Alto del panel para que el video quepa completo en el ancho W, sin recortar ni rellenar. */
+function fitHeight(info) {
+  const h = Math.round((W * info.height) / info.width / 2) * 2;
+  // límites razonables para que un video muy panorámico o muy vertical no desarme el layout
+  return Math.max(Math.round(W * 0.3 / 2) * 2, Math.min(Math.round(W * 1.9 / 2) * 2, h));
+}
 
 /** Tramos que se quedan, alineados a 30 fps (igual criterio que el motor principal). */
 export function quantizeKeep(keep, duration) {
@@ -34,23 +40,12 @@ export function quantizeKeep(keep, duration) {
   return { segs, frames: o, keep: segs.map((s) => ({ s: s.sf / FPS, e: s.ef / FPS, o: s.of / FPS })) };
 }
 
-function contain(info) {
-  // Ajusta "conteniendo" el panel (sin recortar nada del encuadre original);
-  // lo que sobra de espacio se rellena en negro.
-  return (panelW, panelH) => {
-    const base = Math.min(panelW / info.width, panelH / info.height);
-    return { W0: info.width * base, H0: info.height * base };
-  };
-}
-
-/** [idx:v] → panel WxpanelH, respetando los mismos cortes `sel`. Respeta el encuadre
- * original del video (sin zoom/recorte); rellena en negro lo que sobre del panel. */
-function panelGraph(idx, info, sel, panelW, panelH, label) {
-  const { W0, H0 } = contain(info)(panelW, panelH);
-  const w2 = Math.round(W0 / 2) * 2, h2 = Math.round(H0 / 2) * 2;
+/** [idx:v] → panel de ancho W, con el alto exacto de su propia proporción (panelH),
+ * respetando los mismos cortes `sel`. Sin recorte y, salvo redondeo mínimo, sin relleno. */
+function panelGraph(idx, info, sel, panelH, label) {
   return `[${idx}:v]setpts=PTS-STARTPTS,fps=${FPS},select='${sel}',setpts=N/(${FPS}*TB),`
-    + `scale=w=${w2}:h=${h2}:flags=bicubic,`
-    + `pad=${panelW}:${panelH}:(${panelW}-${w2})/2:(${panelH}-${h2})/2:color=black,`
+    + `scale=w=${W}:h=${panelH}:flags=bicubic:force_original_aspect_ratio=decrease,`
+    + `pad=${W}:${panelH}:(ow-iw)/2:(oh-ih)/2:color=black,`
     + `setsar=1,format=yuv420p[${label}]`;
 }
 
@@ -89,9 +84,12 @@ export async function renderScreenShare({ cameraInput, screenInput, dir, cameraI
   const outDur = q.frames / FPS;
   const { voice } = await buildVoice(dir, cameraInput, cameraInfo, q);
 
+  const CAM_H = fitHeight(cameraInfo), SCREEN_H = fitHeight(screenInfo);
+  const BAR_Y = CAM_H;
+  const H = CAM_H + BAR_H + SCREEN_H;
   const sel = q.segs.map((s) => `between(n,${s.sf},${s.ef - 1})`).join('+');
-  const camGraph = panelGraph(0, cameraInfo, sel, W, CAM_H, 'cam');
-  const scrGraph = panelGraph(1, screenInfo, sel, W, SCREEN_H, 'scr');
+  const camGraph = panelGraph(0, cameraInfo, sel, CAM_H, 'cam');
+  const scrGraph = panelGraph(1, screenInfo, sel, SCREEN_H, 'scr');
   const stackGraph = `color=c=black:s=${W}x${BAR_H}:r=${FPS}[bar];[cam][bar][scr]vstack=inputs=3,format=yuv420p[base]`;
 
   // overlay de subtítulos (RGBA, un cuadro por cuadro de salida, igual técnica que el motor principal)

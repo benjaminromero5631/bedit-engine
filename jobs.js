@@ -93,7 +93,7 @@ export async function setDefaultMusic(name) {
   await writeState(st);
   return st.defaultMusic;
 }
-async function pickMusic() {
+export async function pickMusic() {
   if (process.env.MUSIC === 'off') return null;
   const names = await listMusic();
   if (!names.length) return null;

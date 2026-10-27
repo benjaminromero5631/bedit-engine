@@ -9,7 +9,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import Busboy from 'busboy';
-import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
+import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
@@ -158,6 +158,16 @@ const server = http.createServer(async (req, res) => {
       if (body.name) { const t = await musicByName(body.name); if (!t) return send(res, 404, { error: 'Esa pista no existe' }); }
       const def = await setDefaultMusic(body.name || null);
       return send(res, 200, { ok: true, default: def });
+    }
+    if (p === '/music/default/file' && req.method === 'GET') {
+      // Sirve los bytes crudos de la pista por defecto (o la que toque por rotación si no hay default),
+      // para que otros servicios internos (ej: screenshare-engine) puedan descargarla y usarla al renderizar.
+      const def = await getDefaultMusic();
+      const track = (def ? await musicByName(def) : null) || (await pickMusic());
+      if (!track) return send(res, 404, { error: 'No hay ninguna pista de música disponible' });
+      const ext = (path.extname(track.name) || '.mp3').slice(1).toLowerCase();
+      const mime = { mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', aac: 'audio/aac', ogg: 'audio/ogg', flac: 'audio/flac' }[ext] || 'application/octet-stream';
+      return streamFile(req, res, track.path, mime, track.name, 'inline');
     }
     let m = p.match(/^\/music\/(.+)$/);
     if (m && req.method === 'DELETE') {

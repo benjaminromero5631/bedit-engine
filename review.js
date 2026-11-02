@@ -97,7 +97,7 @@ button.dng{color:var(--usr)}
 .mtrk .x{color:var(--mut);cursor:pointer}
 .mtrk .x:hover{color:var(--usr)}
 </style></head><body>
-<header><h1>B Edit · Revisión</h1><button id="library">Biblioteca B-roll</button><button id="refresh">Actualizar</button><button id="tok">Token</button></header>
+<header><h1>B Edit · Revisión</h1><button id="phraseMode">Frase + B-roll</button><button id="library">Biblioteca B-roll</button><button id="refresh">Actualizar</button><button id="tok">Token</button></header>
 <main id="app"></main>
 <script>
 var TOKEN = '';
@@ -664,6 +664,7 @@ function apply() {
     .catch(function (e) { document.getElementById('info').textContent = 'Error: ' + e.message; btn.disabled = false; });
 }
 document.getElementById('library').onclick = showLibrary;
+document.getElementById('phraseMode').onclick = function () { window.location.href = '/phrase-broll'; };
 document.getElementById('refresh').onclick = function () { cur ? openJob(cur) : showList(); };
 document.getElementById('tok').onclick = function () { showTokenForm(''); };
 showList();

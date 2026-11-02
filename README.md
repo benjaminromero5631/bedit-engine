@@ -102,6 +102,10 @@ La biblioteca guarda clips propios en `/data/broll`. La subida acepta MP4, MOV y
 
 `options`: `{"sensitivity":"suave|normal|fuerte","seed":1,"music":false,"musicName":"x.mp3"}`.
 
+### Modo separado: Frase + B-roll
+
+La revisión tiene un acceso independiente a `/phrase-broll`. Este modo mantiene su biblioteca en `/data/phrase-broll`, separada de `/data/broll` y de los trabajos Talking Head. Acepta cargas múltiples desde la interfaz (cada clip recibe sus propias etiquetas), conserva el encuadre con bandas negras cuando haga falta y elimina el audio original. Al enviar una frase crea un borrador vertical de 8–10 segundos, con música aleatoria de `/data/music`, una frase fija centrada y una mezcla inicial de 4–6 tomas. La relación entre frase y etiquetas usa coincidencias locales y sinónimos explícitos; si hay pocos clips relacionados, el borrador lo advierte. Los borradores persisten hasta que el usuario los elimine y pueden editarse, regenerarse, aprobarse, marcarse publicados o descargarse desde su propia sección.
+
 ## Variables
 
 `BEDIT_TOKEN` (obligatoria) · `WHISPER_MODEL` (small) · `X264_PRESET` (slow) · `X264_CRF` (17) ·

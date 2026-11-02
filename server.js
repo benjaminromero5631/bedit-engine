@@ -3,6 +3,7 @@ import { editJob, strengthenJobCuts } from './pipeline.js';
 import { applyMusicOnly, quantizeKeep } from './render.js';
 import { probe, run } from './media.js';
 import { REVIEW_HTML } from './review.js';
+import { PHRASE_BROLL_HTML } from './phraseBrollReview.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -11,10 +12,12 @@ import crypto from 'node:crypto';
 import Busboy from 'busboy';
 import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
+import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, updatePhraseClipTags, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, editPhraseDraft, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
 const PORT = Number(process.env.PORT || 8080);
+const PHRASE_BROLL_ROOT = path.join(process.env.DATA_DIR || '/data', 'phrase-broll');
 
 const send = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
 const authed = (req) => {
@@ -84,7 +87,87 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
     if (p === '/health') return send(res, 200, { ok: true });
     if (p === '/review' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(REVIEW_HTML); }
+    if (p === '/phrase-broll' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(PHRASE_BROLL_HTML); }
     if (!authed(req)) return send(res, 401, { error: 'No autorizado' });
+
+    // ── Frase + B-roll: biblioteca, borradores y render propios, aislados de /jobs y /broll ──
+    if (p === '/phrase-broll/library' && req.method === 'GET') return send(res, 200, { clips: await listPhraseClips() });
+    if (p === '/phrase-broll/library' && req.method === 'POST') {
+      const temp = path.join(PHRASE_BROLL_ROOT, 'library', `.upload-${crypto.randomBytes(6).toString('hex')}`);
+      let converted;
+      try {
+        const uploaded = await receiveFile(req, temp, 'file', 150 * 1024 * 1024);
+        const sourceName = uploaded.filename || '';
+        if (!/\.(mp4|mov|m4v|webm)$/i.test(sourceName)) throw new Error('Sube un video MP4, MOV o WebM');
+        const original = await probe(temp);
+        if (original.duration < 1 || original.duration > 60) throw new Error('Cada B-roll debe durar entre 1 segundo y 1 minuto');
+        let tags;
+        try { tags = JSON.parse(uploaded.fields.tags || '[]'); } catch { throw new Error('Las etiquetas no tienen un formato válido'); }
+        if (!Array.isArray(tags) || !tags.some((x) => String(x).trim())) throw new Error('Agrega al menos una etiqueta a este video');
+        converted = path.join(PHRASE_BROLL_ROOT, 'library', 'clips', `normalized-${crypto.randomBytes(6).toString('hex')}.mp4`);
+        await run('ffmpeg', ['-y', '-v', 'error', '-i', temp, '-an', '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', converted]);
+        const info = await probe(converted);
+        const clip = await addPhraseClip({ filename: converted, tags, info });
+        converted = null;
+        await fsp.rm(temp, { force: true });
+        return send(res, 201, { ok: true, clip });
+      } catch (e) {
+        await fsp.rm(temp, { force: true });
+        if (converted) await fsp.rm(converted, { force: true });
+        return send(res, 400, { error: e.message });
+      }
+    }
+    let phraseClipMatch = p.match(/^\/phrase-broll\/library\/([a-f0-9]{16})(?:\/(file))?$/);
+    if (phraseClipMatch && phraseClipMatch[2] === 'file' && req.method === 'GET') {
+      const file = await phraseClipFile(phraseClipMatch[1]);
+      if (!file) return send(res, 404, { error: 'No existe ese clip' });
+      return streamFile(req, res, file, 'video/mp4', `${phraseClipMatch[1]}.mp4`, 'inline');
+    }
+    if (phraseClipMatch && !phraseClipMatch[2] && req.method === 'PATCH') {
+      let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+      try { const clip = await updatePhraseClipTags(phraseClipMatch[1], body.tags); return send(res, clip ? 200 : 404, clip ? { ok: true, clip } : { error: 'No existe ese clip' }); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+    }
+    if (phraseClipMatch && !phraseClipMatch[2] && req.method === 'DELETE') {
+      try { const removed = await deletePhraseClip(phraseClipMatch[1]); return send(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'No existe ese clip' }); }
+      catch (e) { return send(res, 409, { error: e.message }); }
+    }
+    if (p === '/phrase-broll/drafts' && req.method === 'GET') return send(res, 200, { drafts: await listPhraseDrafts() });
+    if (p === '/phrase-broll/drafts' && req.method === 'POST') {
+      let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+      try { const draft = await createPhraseDraft(body.phrase); return send(res, 202, { id: draft.id, status: draft.status }); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+    }
+    let phraseDraftMatch = p.match(/^\/phrase-broll\/drafts\/([a-f0-9]{16})(?:\/(result|edit|regenerate|state))?$/);
+    if (phraseDraftMatch) {
+      const [, draftId, sub] = phraseDraftMatch;
+      const draft = await getPhraseDraft(draftId);
+      if (!draft) return send(res, 404, { error: 'No existe ese borrador' });
+      if (!sub && req.method === 'GET') return send(res, 200, { draft });
+      if (sub === 'result' && req.method === 'GET') {
+        const file = await phraseDraftFile(draftId);
+        if (!file) return send(res, 409, { error: 'El render todavía no está listo' });
+        return streamFile(req, res, file, 'video/mp4', `frase-broll-${draftId}.mp4`, 'inline');
+      }
+      if (sub === 'edit' && req.method === 'POST') {
+        let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        try { const next = await editPhraseDraft(draftId, body); return send(res, 202, { id: next.id, status: next.status }); }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if (sub === 'regenerate' && req.method === 'POST') {
+        try { const next = await regeneratePhraseDraft(draftId); return send(res, 202, { id: next.id, status: next.status }); }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if (sub === 'state' && req.method === 'POST') {
+        let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        try { const next = await setPhraseDraftState(draftId, body.state); return send(res, 200, { ok: true, approved: next.approved, published: next.published }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
+      if (!sub && req.method === 'DELETE') {
+        try { const removed = await removePhraseDraft(draftId); return send(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'No existe ese borrador' }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
+    }
 
     // ── música ──
     // ── biblioteca B-roll ──
@@ -430,6 +513,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 await initDirs();
+await initPhraseBroll();
 await cleanup();
 setInterval(() => cleanup().catch(() => {}), 6 * 3600 * 1000);
 server.listen(PORT, () => console.log(`bedit-engine escuchando en :${PORT}`));

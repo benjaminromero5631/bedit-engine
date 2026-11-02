@@ -161,13 +161,9 @@ async function chooseComposition(phrase) {
     ? (relevant.length ? 'Había pocos clips con etiquetas relacionadas; completé la mezcla con otros clips disponibles. Revisa el contexto antes de aprobar.' : 'No encontré etiquetas relacionadas con la frase; usé clips disponibles al azar. Revisa el contexto antes de aprobar.')
     : '';
 
-  if (unique.length === 1) {
-    const target = (8 + rand(3)) * FPS;
-    const clip = unique[0].clip;
-    return { duration: target / FPS, events: [{ clipId: clip.id, sourceAt: 0, duration: target / FPS }], warning: warning || 'La biblioteca solo tiene un clip disponible; lo mantuve continuo para no repetir tomas pegadas.' };
-  }
+  if (unique.length === 1) throw new Error('Para crear un reel con tomas de 1 a 2,5 segundos necesito al menos 2 clips distintos en la biblioteca.');
 
-  let count = unique.length >= 4 ? 4 + rand(3) : Math.min(6, unique.length * 2);
+  let count = unique.length >= 4 ? 4 + rand(3) : unique.length === 2 ? 6 : Math.min(6, unique.length * 2);
   count = Math.max(4, count);
   const choices = unique.map((x) => x.clip);
   let sequence = [];
@@ -183,7 +179,7 @@ async function chooseComposition(phrase) {
 
   let allocation = null, targetFrames = null;
   for (const target of shuffle([8, 9, 10]).map((x) => x * FPS)) {
-    const min = sequence.map(() => FPS), max = sequence.map((x) => Math.max(FPS, Math.min(x.repeated ? FPS : 3 * FPS, Math.floor(x.clip.duration * FPS))));
+    const min = sequence.map(() => FPS), max = sequence.map((x) => Math.max(FPS, Math.min(x.repeated ? FPS : Math.floor(2.5 * FPS), Math.floor(x.clip.duration * FPS))));
     allocation = splitFrames(target, min, max);
     if (allocation) { targetFrames = target; break; }
   }
@@ -356,7 +352,7 @@ export async function editPhraseDraft(id, input) {
   const events = input.events.map((event) => {
     const clip = index.find((x) => x.id === event.clipId);
     const dur = Number(event.duration);
-    if (!clip || !Number.isFinite(dur) || dur < 1 || dur > 10 || dur > clip.duration) throw new Error('Cada toma debe durar al menos 1 segundo y no puede superar la duración de su clip');
+    if (!clip || !Number.isFinite(dur) || dur < 1 || dur > 2.5 || dur > clip.duration) throw new Error('Cada toma debe durar entre 1 y 2,5 segundos y no puede superar la duración de su clip');
     const src = Math.max(0, Math.min(Number(event.sourceAt) || 0, Math.max(0, clip.duration - dur)));
     return { clipId: clip.id, sourceAt: src, duration: Math.round(dur * FPS) / FPS };
   });

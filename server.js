@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import Busboy from 'busboy';
 import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
-import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, updatePhraseClipTags, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, editPhraseDraft, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
+import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, editPhraseDraft, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
@@ -99,6 +99,7 @@ const server = http.createServer(async (req, res) => {
         const uploaded = await receiveFile(req, temp, 'file', 150 * 1024 * 1024);
         const sourceName = uploaded.filename || '';
         if (!/\.(mp4|mov|m4v|webm)$/i.test(sourceName)) throw new Error('Sube un video MP4, MOV o WebM');
+        const sourceHash = await phraseFileDigest(temp);
         const original = await probe(temp);
         if (original.duration < 1 || original.duration > 60) throw new Error('Cada B-roll debe durar entre 1 segundo y 1 minuto');
         let tags;
@@ -107,7 +108,7 @@ const server = http.createServer(async (req, res) => {
         converted = path.join(PHRASE_BROLL_ROOT, 'library', 'clips', `normalized-${crypto.randomBytes(6).toString('hex')}.mp4`);
         await run('ffmpeg', ['-y', '-v', 'error', '-i', temp, '-an', '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', converted]);
         const info = await probe(converted);
-        const clip = await addPhraseClip({ filename: converted, tags, info });
+        const clip = await addPhraseClip({ filename: converted, tags, info, sourceHash });
         converted = null;
         await fsp.rm(temp, { force: true });
         return send(res, 201, { ok: true, clip });

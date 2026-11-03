@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createCanvas } from '@napi-rs/canvas';
@@ -16,6 +17,7 @@ const W = 1080, H = 1920, FPS = 30;
 const active = new Map();
 const renderQueue = [];
 let rendering = false;
+let libraryMutation = Promise.resolve();
 const clean = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const rand = (n) => crypto.randomInt(Math.max(1, n));
 const shuffle = (items) => { const a = [...items]; for (let i = a.length - 1; i > 0; i--) { const j = rand(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -38,6 +40,16 @@ const ALIASES = [
 const STOP = new Set('a al algo ante bajo con contra como de del desde donde durante e el ella ellas ellos en entre era es esa ese eso esta este esto fue ha hacia hasta la las le les lo los mas más me mi mis mucho muy ni no o para pero por que se sin sobre su sus te tu tus un una uno unas unos y ya'.split(' '));
 
 async function readJson(file, fallback) { try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch { return fallback; } }
+export async function phraseFileDigest(file) {
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  return hash.digest('hex');
+}
+function serializeLibraryMutation(fn) {
+  const task = libraryMutation.then(fn, fn);
+  libraryMutation = task.catch(() => {});
+  return task;
+}
 async function writeJson(file, value) {
   const tmp = file + '.tmp-' + crypto.randomBytes(4).toString('hex');
   await fs.writeFile(tmp, JSON.stringify(value, null, 2));
@@ -65,18 +77,35 @@ export async function phraseClipFile(id) {
   const item = await phraseClip(id);
   return item ? path.join(CLIPS, path.basename(item.file)) : null;
 }
-export async function addPhraseClip({ filename, tags, info }) {
-  const labels = [...new Set((Array.isArray(tags) ? tags : []).map((x) => String(x).trim().slice(0, 40)).filter(Boolean))].slice(0, 16);
-  if (!labels.length) throw new Error('Agrega al menos una etiqueta para que el sistema pueda relacionar el clip con una frase');
-  const id = crypto.randomBytes(8).toString('hex');
-  const file = `${id}.mp4`;
-  const finalPath = path.join(CLIPS, file);
-  const entries = await libraryIndex();
-  await fs.rename(filename, finalPath);
-  const item = { id, file, tags: labels, duration: Math.round(info.duration * 1000) / 1000, width: info.width, height: info.height, createdAt: new Date().toISOString() };
-  entries.push(item);
-  try { await writeJson(INDEX, entries); } catch (error) { await fs.rm(finalPath, { force: true }); throw error; }
-  return { id: item.id, tags: item.tags, duration: item.duration, width: item.width, height: item.height, createdAt: item.createdAt };
+export async function addPhraseClip({ filename, tags, info, sourceHash }) {
+  return serializeLibraryMutation(async () => {
+    const labels = [...new Set((Array.isArray(tags) ? tags : []).map((x) => String(x).trim().slice(0, 40)).filter(Boolean))].slice(0, 16);
+    if (!labels.length) throw new Error('Agrega al menos una etiqueta para que el sistema pueda relacionar el clip con una frase');
+    const normalizedHash = await phraseFileDigest(filename);
+    const entries = await libraryIndex();
+    let upgradedIndex = false;
+    for (const existing of entries) {
+      let oldNormalizedHash = existing.normalizedHash;
+      if (!oldNormalizedHash) {
+        try { oldNormalizedHash = await phraseFileDigest(path.join(CLIPS, path.basename(existing.file))); }
+        catch { continue; }
+        existing.normalizedHash = oldNormalizedHash;
+        upgradedIndex = true;
+      }
+      if ((sourceHash && existing.sourceHash === sourceHash) || oldNormalizedHash === normalizedHash) {
+        if (upgradedIndex) await writeJson(INDEX, entries);
+        throw new Error('Este video ya está en la biblioteca. No se agregó otra copia.');
+      }
+    }
+    const id = crypto.randomBytes(8).toString('hex');
+    const file = `${id}.mp4`;
+    const finalPath = path.join(CLIPS, file);
+    await fs.rename(filename, finalPath);
+    const item = { id, file, tags: labels, duration: Math.round(info.duration * 1000) / 1000, width: info.width, height: info.height, sourceHash: sourceHash || null, normalizedHash, createdAt: new Date().toISOString() };
+    entries.push(item);
+    try { await writeJson(INDEX, entries); } catch (error) { await fs.rm(finalPath, { force: true }); throw error; }
+    return { id: item.id, tags: item.tags, duration: item.duration, width: item.width, height: item.height, createdAt: item.createdAt };
+  });
 }
 export async function updatePhraseClipTags(id, tags) {
   const entries = await libraryIndex();

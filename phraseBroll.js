@@ -459,7 +459,7 @@ export async function createPhraseDraft(phrase, musicMode = 'random') {
   const { plan, music } = await chooseFreshMix(text, [], { music: !silent });
   if (!silent && !music) throw new Error('No pude seleccionar música de la biblioteca de B‑Edit');
   const id = crypto.randomBytes(8).toString('hex');
-  const draft = { id, phrase: text, fontStyle: crypto.randomInt(2) ? 'montserrat-heavy' : 'montserrat', typographyVersion: 2, status: 'renderizando', progress: 0.03, approved: false, published: false, deleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), duration: plan.duration, events: plan.events, musicName: music?.name || '', warning: plan.warning, error: null };
+  const draft = { id, phrase: text, fontStyle: 'montserrat-heavy', typographyVersion: 2, status: 'renderizando', progress: 0.03, approved: false, published: false, deleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), duration: plan.duration, events: plan.events, musicName: music?.name || '', warning: plan.warning, error: null };
   await fs.mkdir(draftDir(id), { recursive: true }); await saveDraft(draft); startRender(draft);
   return draft;
 }
@@ -467,7 +467,7 @@ export async function listPhraseDrafts() {
   const out = [];
   for (const id of await fs.readdir(DRAFTS).catch(() => [])) {
     const d = await readDraftRaw(id);
-    if (d && !d.deleted) out.push({ id: d.id, phrase: d.phrase, fontStyle: d.fontStyle || 'montserrat', status: d.status, progress: d.progress, approved: !!d.approved, published: !!d.published, createdAt: d.createdAt, updatedAt: d.updatedAt, duration: d.duration, warning: d.warning, error: d.error, musicName: d.musicName, events: d.events });
+    if (d && !d.deleted) out.push({ id: d.id, phrase: d.phrase, fontStyle: d.fontStyle || 'montserrat', typographyVersion: d.typographyVersion || 0, status: d.status, progress: d.progress, approved: !!d.approved, published: !!d.published, createdAt: d.createdAt, updatedAt: d.updatedAt, duration: d.duration, warning: d.warning, error: d.error, musicName: d.musicName, events: d.events });
   }
   return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -519,8 +519,7 @@ export async function applyPhraseDraftTypography(id, input) {
   if (!draft || draft.deleted || draft.status !== 'listo') throw new Error('El video debe estar listo para cambiar el texto');
   const phrase = String(input.phrase ?? draft.phrase).trim();
   if (!phrase || phrase.length > 120) throw new Error('La frase debe tener entre 1 y 120 caracteres');
-  const fontStyle = String(input.fontStyle || '');
-  if (!['montserrat', 'montserrat-heavy'].includes(fontStyle)) throw new Error('Elige una tipografía disponible');
+  const fontStyle = 'montserrat-heavy';
   const musicName = String(input.musicName ?? draft.musicName ?? '');
   if (musicName && !await musicByName(musicName)) throw new Error('Esa canción no está disponible');
   if (active.has(id)) throw new Error('El video está ocupado en otra operación');
@@ -533,7 +532,8 @@ export async function applyPhraseDraftTypography(id, input) {
     await composePhraseOutput({ draft, baseFile, outputFile: tempFile, phrase, fontStyle, musicName });
     await fs.rename(tempFile, finalFile);
     draft.phrase = phrase; draft.fontStyle = fontStyle; draft.musicName = musicName; draft.typographyVersion = 2;
-    draft.approved = false; draft.published = false; draft.updatedAt = new Date().toISOString();
+    if (input.preserveState !== true) { draft.approved = false; draft.published = false; }
+    draft.updatedAt = new Date().toISOString();
     await saveDraft(draft);
     return draft;
   } finally {
@@ -553,7 +553,7 @@ export async function editQueuedPhrase(id, phrase) {
     const draft = await readDraftRaw(id);
     if (!draft || draft.deleted || draft.status !== 'en_cola') throw new Error('Este video ya no está en la cola.');
     draft.phrase = text; draft.events = plan.events; draft.duration = plan.duration;
-    draft.musicName = music?.name || ''; draft.warning = plan.warning; draft.progress = 0;
+    draft.musicName = music?.name || ''; draft.fontStyle = 'montserrat-heavy'; draft.typographyVersion = 2; draft.warning = plan.warning; draft.progress = 0;
     draft.updatedAt = new Date().toISOString();
     await saveDraft(draft);
     Object.assign(queued, draft);
@@ -566,8 +566,7 @@ export async function editPhraseDraft(id, input) {
   if (active.has(id)) throw new Error('El video todavía se está renderizando');
   const phrase = String(input.phrase ?? draft.phrase).trim();
   if (!phrase || phrase.length > 120) throw new Error('La frase debe tener entre 1 y 120 caracteres');
-  const fontStyle = input.fontStyle === undefined ? (draft.fontStyle || 'montserrat') : String(input.fontStyle);
-  if (!['montserrat', 'montserrat-heavy'].includes(fontStyle)) throw new Error('Elige una tipografía disponible');
+  const fontStyle = 'montserrat-heavy';
   if (!Array.isArray(input.events) || input.events.length < 1 || input.events.length > 8) throw new Error('La mezcla debe tener entre 1 y 8 tomas');
   const index = await libraryIndex();
   const events = input.events.map((event) => {
@@ -598,7 +597,7 @@ export async function regeneratePhraseDraft(id) {
   if (active.has(id)) throw new Error('El video todavía se está renderizando');
   const { plan, music } = await chooseFreshMix(draft.phrase, [draft.musicName], { music: !!draft.musicName });
   if (draft.musicName && !music) throw new Error('No hay música disponible en B‑Edit');
-  draft.events = plan.events; draft.duration = plan.duration; draft.musicName = music?.name || ''; draft.typographyVersion = 2; draft.warning = plan.warning;
+  draft.events = plan.events; draft.duration = plan.duration; draft.musicName = music?.name || ''; draft.fontStyle = 'montserrat-heavy'; draft.typographyVersion = 2; draft.warning = plan.warning;
   draft.status = 'renderizando'; draft.progress = 0.03; draft.error = null; draft.approved = false; draft.published = false; draft.updatedAt = new Date().toISOString();
   await saveDraft(draft); startRender(draft);
   return draft;

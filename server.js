@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import Busboy from 'busboy';
 import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
@@ -18,6 +19,8 @@ const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
 const PORT = Number(process.env.PORT || 8080);
 const PHRASE_BROLL_ROOT = path.join(process.env.DATA_DIR || '/data', 'phrase-broll');
+const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
+const FONT_DIR = fs.existsSync(path.join(APP_DIR, '../fonts')) ? path.join(APP_DIR, '../fonts') : APP_DIR;
 
 const send = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
 const authed = (req) => {
@@ -86,6 +89,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
     if (p === '/health') return send(res, 200, { ok: true });
+    if (p === '/assets/montserrat-latin-variable.woff2' && req.method === 'GET') return streamFile(req, res, path.join(FONT_DIR, 'montserrat-latin-variable.woff2'), 'font/woff2', 'montserrat-latin-variable.woff2', 'inline');
     if (p === '/review' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(REVIEW_HTML); }
     if (p === '/phrase-broll' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(PHRASE_BROLL_HTML); }
     if (!authed(req)) return send(res, 401, { error: 'No autorizado' });

@@ -63,10 +63,13 @@ async function saveDraft(draft) { await writeJson(path.join(draftDir(draft.id), 
 export async function initPhraseBroll() {
   await Promise.all([fs.mkdir(CLIPS, { recursive: true }), fs.mkdir(DRAFTS, { recursive: true })]);
   if (!await fs.stat(INDEX).catch(() => null)) await writeJson(INDEX, []);
+  const pending = [];
   for (const id of await fs.readdir(DRAFTS).catch(() => [])) {
     const draft = await readDraftRaw(id);
-    if (draft?.status === 'renderizando') startRender(draft);
+    if (draft && ['renderizando', 'en_cola'].includes(draft.status)) pending.push(draft);
   }
+  pending.sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+  for (const draft of pending) startRender(draft);
 }
 
 export async function listPhraseClips() {
@@ -282,7 +285,7 @@ function drawPhrase(phrase, outPath) {
   let px = 46;
   let lines = [];
   const wrap = (size) => {
-    ctx.font = `600 ${size}px Inter, sans-serif`;
+    ctx.font = `600 ${size}px Montserrat, sans-serif`;
     const result = [];
     let line = '';
     for (const word of words) {
@@ -296,7 +299,7 @@ function drawPhrase(phrase, outPath) {
   lines = wrap(px);
   while (lines.length > 3 && px > 30) { px -= 2; lines = wrap(px); }
   const lineH = px * 1.18, y0 = H / 2 - ((lines.length - 1) * lineH) / 2;
-  ctx.save(); ctx.font = `600 ${px}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+  ctx.save(); ctx.font = `600 ${px}px Montserrat, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
   ctx.shadowColor = 'rgba(0,0,0,0.72)'; ctx.shadowBlur = 5; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 2;
   lines.forEach((line, i) => ctx.fillText(line, W / 2, y0 + i * lineH, W * 0.88));
   ctx.restore();
@@ -344,7 +347,17 @@ async function renderDraftFile(draft) {
 
 function startRender(draft) {
   if (active.has(draft.id)) return;
-  active.set(draft.id, true); renderQueue.push(draft); pumpPhraseRenders();
+  const queued = rendering || renderQueue.length > 0;
+  draft.status = queued ? 'en_cola' : 'renderizando';
+  draft.progress = queued ? 0 : 0.03;
+  active.set(draft.id, true);
+  renderQueue.push(draft);
+  void saveDraft(draft).then(() => pumpPhraseRenders()).catch((error) => {
+    active.delete(draft.id);
+    const index = renderQueue.findIndex((item) => item.id === draft.id);
+    if (index >= 0) renderQueue.splice(index, 1);
+    console.error('No se pudo guardar el trabajo en cola', error);
+  });
 }
 async function pumpPhraseRenders() {
   if (rendering) return;
@@ -352,6 +365,7 @@ async function pumpPhraseRenders() {
   while (renderQueue.length) {
     const draft = renderQueue.shift();
     try {
+      draft.status = 'renderizando'; draft.progress = 0.03; draft.updatedAt = new Date().toISOString(); await saveDraft(draft);
       const stats = await renderDraftFile(draft);
       const latest = await readDraftRaw(draft.id);
       if (latest) { latest.status = 'listo'; latest.progress = 1; latest.error = null; latest.stats = stats; await saveDraft(latest); await remember(latest); }

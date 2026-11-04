@@ -18,6 +18,7 @@ COPY cuts.js config.js draw.js plan.js ./src/core/
 COPY server.js jobs.js pipeline.js render.js media.js transcribe.js fonts.js review.js broll.js phraseBroll.js phraseBrollReview.js ./src/
 COPY transcribe.py ./python/
 COPY *.woff2 ./fonts/
+COPY Montserrat-OFL.txt ./fonts/
 
 ENV NODE_ENV=production \
     DATA_DIR=/data \

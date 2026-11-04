@@ -477,6 +477,7 @@ export async function applyPhraseDraftMusic(id, musicName) {
   const trackName = String(musicName || '');
   const track = await musicByName(trackName);
   if (!track) throw new Error('Esa canción no está disponible');
+  if (track.name === draft.musicName) return draft;
   if (active.has(id)) throw new Error('El video está ocupado en otra operación');
   active.set(id, true);
   const dir = draftDir(id), finalFile = path.join(dir, 'final.mp4');
@@ -489,7 +490,7 @@ export async function applyPhraseDraftMusic(id, musicName) {
     const info = await probe(tempFile);
     if (Math.abs(info.duration - duration) > 0.12) throw new Error('El MP4 salió con una duración distinta');
     await fs.rename(tempFile, finalFile);
-    draft.musicName = track.name; draft.updatedAt = new Date().toISOString();
+    draft.musicName = track.name; draft.approved = false; draft.published = false; draft.updatedAt = new Date().toISOString();
     await saveDraft(draft);
     return draft;
   } finally {

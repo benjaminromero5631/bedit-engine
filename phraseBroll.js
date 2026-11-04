@@ -394,7 +394,7 @@ async function renderDraftFile(draft) {
     await fs.rename(baseTmp, path.join(dir, 'base.mp4'));
     const info = await composePhraseOutput({ draft, baseFile: path.join(dir, 'base.mp4'), outputFile: finalTmp });
     await fs.rename(finalTmp, path.join(dir, 'final.mp4'));
-    draft.typographyVersion = 2;
+    draft.typographyVersion = 3;
     return { duration: info.duration, width: info.width, height: info.height, fileSize: (await fs.stat(path.join(dir, 'final.mp4'))).size };
   } finally {
     await Promise.all([fs.rm(baseTmp, { force: true }), fs.rm(finalTmp, { force: true })]);
@@ -437,7 +437,7 @@ async function pumpPhraseRenders() {
       draft.status = 'renderizando'; draft.progress = 0.03; draft.updatedAt = new Date().toISOString(); await saveDraft(draft);
       const stats = await renderDraftFile(draft);
       const latest = await readDraftRaw(draft.id);
-      if (latest) { latest.status = 'listo'; latest.progress = 1; latest.error = null; latest.stats = stats; latest.typographyVersion = 2; await saveDraft(latest); await remember(latest); }
+      if (latest) { latest.status = 'listo'; latest.progress = 1; latest.error = null; latest.stats = stats; latest.typographyVersion = 3; await saveDraft(latest); await remember(latest); }
     } catch (error) {
       const latest = await readDraftRaw(draft.id);
       if (latest) {
@@ -459,7 +459,7 @@ export async function createPhraseDraft(phrase, musicMode = 'random') {
   const { plan, music } = await chooseFreshMix(text, [], { music: !silent });
   if (!silent && !music) throw new Error('No pude seleccionar música de la biblioteca de B‑Edit');
   const id = crypto.randomBytes(8).toString('hex');
-  const draft = { id, phrase: text, fontStyle: 'montserrat-heavy', typographyVersion: 2, status: 'renderizando', progress: 0.03, approved: false, published: false, deleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), duration: plan.duration, events: plan.events, musicName: music?.name || '', warning: plan.warning, error: null };
+  const draft = { id, phrase: text, fontStyle: 'montserrat-heavy', typographyVersion: 3, status: 'renderizando', progress: 0.03, approved: false, published: false, deleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), duration: plan.duration, events: plan.events, musicName: music?.name || '', warning: plan.warning, error: null };
   await fs.mkdir(draftDir(id), { recursive: true }); await saveDraft(draft); startRender(draft);
   return draft;
 }
@@ -523,7 +523,7 @@ export async function applyPhraseDraftTypography(id, input) {
   const musicName = String(input.musicName ?? draft.musicName ?? '');
   if (musicName && !await musicByName(musicName)) throw new Error('Esa canción no está disponible');
   if (active.has(id)) throw new Error('El video está ocupado en otra operación');
-  if (fontStyle === (draft.fontStyle || 'montserrat') && phrase === draft.phrase && musicName === draft.musicName && draft.typographyVersion === 2) return draft;
+  if (fontStyle === (draft.fontStyle || 'montserrat') && phrase === draft.phrase && musicName === draft.musicName && draft.typographyVersion === 3) return draft;
   active.set(id, true);
   const dir = draftDir(id), finalFile = path.join(dir, 'final.mp4');
   const tempFile = path.join(dir, `final.text-${crypto.randomBytes(4).toString('hex')}.mp4`);
@@ -531,7 +531,7 @@ export async function applyPhraseDraftTypography(id, input) {
     const baseFile = await ensurePhraseBase(draft);
     await composePhraseOutput({ draft, baseFile, outputFile: tempFile, phrase, fontStyle, musicName });
     await fs.rename(tempFile, finalFile);
-    draft.phrase = phrase; draft.fontStyle = fontStyle; draft.musicName = musicName; draft.typographyVersion = 2;
+    draft.phrase = phrase; draft.fontStyle = fontStyle; draft.musicName = musicName; draft.typographyVersion = 3;
     if (input.preserveState !== true) { draft.approved = false; draft.published = false; }
     draft.updatedAt = new Date().toISOString();
     await saveDraft(draft);
@@ -553,7 +553,7 @@ export async function editQueuedPhrase(id, phrase) {
     const draft = await readDraftRaw(id);
     if (!draft || draft.deleted || draft.status !== 'en_cola') throw new Error('Este video ya no está en la cola.');
     draft.phrase = text; draft.events = plan.events; draft.duration = plan.duration;
-    draft.musicName = music?.name || ''; draft.fontStyle = 'montserrat-heavy'; draft.typographyVersion = 2; draft.warning = plan.warning; draft.progress = 0;
+    draft.musicName = music?.name || ''; draft.fontStyle = 'montserrat-heavy'; draft.typographyVersion = 3; draft.warning = plan.warning; draft.progress = 0;
     draft.updatedAt = new Date().toISOString();
     await saveDraft(draft);
     Object.assign(queued, draft);
@@ -586,7 +586,7 @@ export async function editPhraseDraft(id, input) {
   if (duration < 8 || duration > 10) throw new Error('La duración final debe quedar entre 8 y 10 segundos');
   let musicName = input.musicName === undefined ? draft.musicName : String(input.musicName || '');
   if (musicName && !await musicByName(musicName)) throw new Error('Elige una canción disponible');
-  draft.phrase = phrase; draft.fontStyle = fontStyle; draft.typographyVersion = 2; draft.events = events; draft.duration = duration; draft.musicName = musicName;
+  draft.phrase = phrase; draft.fontStyle = fontStyle; draft.typographyVersion = 3; draft.events = events; draft.duration = duration; draft.musicName = musicName;
   draft.status = 'renderizando'; draft.progress = 0.03; draft.error = null; draft.approved = false; draft.published = false; draft.updatedAt = new Date().toISOString();
   await saveDraft(draft); startRender(draft);
   return draft;
@@ -597,7 +597,7 @@ export async function regeneratePhraseDraft(id) {
   if (active.has(id)) throw new Error('El video todavía se está renderizando');
   const { plan, music } = await chooseFreshMix(draft.phrase, [draft.musicName], { music: !!draft.musicName });
   if (draft.musicName && !music) throw new Error('No hay música disponible en B‑Edit');
-  draft.events = plan.events; draft.duration = plan.duration; draft.musicName = music?.name || ''; draft.fontStyle = 'montserrat-heavy'; draft.typographyVersion = 2; draft.warning = plan.warning;
+  draft.events = plan.events; draft.duration = plan.duration; draft.musicName = music?.name || ''; draft.fontStyle = 'montserrat-heavy'; draft.typographyVersion = 3; draft.warning = plan.warning;
   draft.status = 'renderizando'; draft.progress = 0.03; draft.error = null; draft.approved = false; draft.published = false; draft.updatedAt = new Date().toISOString();
   await saveDraft(draft); startRender(draft);
   return draft;

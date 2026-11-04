@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import Busboy from 'busboy';
 import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
-import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, updatePhraseClipTagsBatch, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, editPhraseDraft, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
+import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, updatePhraseClipTagsBatch, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, editPhraseDraft, editQueuedPhrase, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
@@ -148,7 +148,7 @@ const server = http.createServer(async (req, res) => {
       try { const draft = await createPhraseDraft(body.phrase); return send(res, 202, { id: draft.id, status: draft.status }); }
       catch (e) { return send(res, 400, { error: e.message }); }
     }
-    let phraseDraftMatch = p.match(/^\/phrase-broll\/drafts\/([a-f0-9]{16})(?:\/(result|edit|regenerate|state))?$/);
+    let phraseDraftMatch = p.match(/^\/phrase-broll\/drafts\/([a-f0-9]{16})(?:\/(result|edit|queue|regenerate|state))?$/);
     if (phraseDraftMatch) {
       const [, draftId, sub] = phraseDraftMatch;
       const draft = await getPhraseDraft(draftId);
@@ -163,6 +163,11 @@ const server = http.createServer(async (req, res) => {
         let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
         try { const next = await editPhraseDraft(draftId, body); return send(res, 202, { id: next.id, status: next.status }); }
         catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if (sub === 'queue' && req.method === 'PATCH') {
+        let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        try { const next = await editQueuedPhrase(draftId, body.phrase); return send(res, 200, { ok: true, id: next.id, phrase: next.phrase, status: next.status }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
       }
       if (sub === 'regenerate' && req.method === 'POST') {
         try { const next = await regeneratePhraseDraft(draftId); return send(res, 202, { id: next.id, status: next.status }); }

@@ -16,6 +16,7 @@ const STATE = path.join(ROOT, 'state.json');
 const W = 1080, H = 1920, FPS = 30;
 const active = new Map();
 const renderQueue = [];
+const queueLocks = new Map();
 let rendering = false;
 let libraryMutation = Promise.resolve();
 const clean = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -359,11 +360,24 @@ function startRender(draft) {
     console.error('No se pudo guardar el trabajo en cola', error);
   });
 }
+function withQueueLock(id, fn) {
+  if (queueLocks.has(id)) throw new Error('Ese video ya se está actualizando. Espera un momento.');
+  let release;
+  const wait = new Promise((resolve) => { release = resolve; });
+  queueLocks.set(id, { wait });
+  return Promise.resolve().then(fn).finally(() => {
+    if (queueLocks.get(id)?.wait === wait) queueLocks.delete(id);
+    release();
+  });
+}
 async function pumpPhraseRenders() {
   if (rendering) return;
   rendering = true;
   while (renderQueue.length) {
-    const draft = renderQueue.shift();
+    const draft = renderQueue[0];
+    const lock = queueLocks.get(draft.id);
+    if (lock) { await lock.wait; continue; }
+    renderQueue.shift();
     try {
       draft.status = 'renderizando'; draft.progress = 0.03; draft.updatedAt = new Date().toISOString(); await saveDraft(draft);
       const stats = await renderDraftFile(draft);
@@ -405,6 +419,25 @@ export async function getPhraseDraft(id) {
   const draft = await readDraftRaw(id);
   if (!draft || draft.deleted) return null;
   return draft;
+}
+export async function editQueuedPhrase(id, phrase) {
+  const queued = renderQueue.find((item) => item.id === id && item.status === 'en_cola');
+  if (!queued || !active.has(id)) throw new Error('Este video ya empezó a renderizarse o ya no está en la cola.');
+  const text = String(phrase || '').trim();
+  if (!text || text.length > 120) throw new Error('La frase debe tener entre 1 y 120 caracteres');
+  return withQueueLock(id, async () => {
+    if (!renderQueue.includes(queued) || queued.status !== 'en_cola') throw new Error('Este video ya empezó a renderizarse o ya no está en la cola.');
+    const { plan, music } = await chooseFreshMix(text, [queued.musicName]);
+    if (!music) throw new Error('No hay música disponible en B‑Edit');
+    const draft = await readDraftRaw(id);
+    if (!draft || draft.deleted || draft.status !== 'en_cola') throw new Error('Este video ya no está en la cola.');
+    draft.phrase = text; draft.events = plan.events; draft.duration = plan.duration;
+    draft.musicName = music.name; draft.warning = plan.warning; draft.progress = 0;
+    draft.updatedAt = new Date().toISOString();
+    await saveDraft(draft);
+    Object.assign(queued, draft);
+    return draft;
+  });
 }
 export async function editPhraseDraft(id, input) {
   const draft = await readDraftRaw(id);
@@ -456,6 +489,18 @@ export async function setPhraseDraftState(id, state) {
   await saveDraft(draft); return draft;
 }
 export async function removePhraseDraft(id) {
+  const queued = renderQueue.find((item) => item.id === id && item.status === 'en_cola');
+  if (queued && active.has(id)) {
+    return withQueueLock(id, async () => {
+      if (!renderQueue.includes(queued) || queued.status !== 'en_cola') throw new Error('Este video ya empezó a renderizarse; no se puede quitar de la cola.');
+      const draft = await readDraftRaw(id);
+      if (!draft || draft.deleted) return false;
+      await fs.rm(draftDir(id), { recursive: true, force: true });
+      renderQueue.splice(renderQueue.indexOf(queued), 1);
+      active.delete(id);
+      return true;
+    });
+  }
   const draft = await readDraftRaw(id);
   if (!draft) return false;
   if (active.has(id)) throw new Error('Espera a que termine el render antes de eliminar este borrador');

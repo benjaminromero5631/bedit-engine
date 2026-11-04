@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import Busboy from 'busboy';
 import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
-import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, updatePhraseClipTagsBatch, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, editPhraseDraft, editQueuedPhrase, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
+import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, updatePhraseClipTagsBatch, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, phraseDraftBaseFile, editPhraseDraft, editQueuedPhrase, applyPhraseDraftMusic, applyPhraseDraftTypography, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
@@ -148,7 +148,16 @@ const server = http.createServer(async (req, res) => {
       try { const draft = await createPhraseDraft(body.phrase); return send(res, 202, { id: draft.id, status: draft.status }); }
       catch (e) { return send(res, 400, { error: e.message }); }
     }
-    let phraseDraftMatch = p.match(/^\/phrase-broll\/drafts\/([a-f0-9]{16})(?:\/(result|edit|queue|regenerate|state))?$/);
+    let phraseMusicPreview = p.match(/^\/phrase-broll\/music-preview\/(.+)$/);
+    if (phraseMusicPreview && req.method === 'GET') {
+      const name = path.basename(decodeURIComponent(phraseMusicPreview[1]));
+      const track = await musicByName(name);
+      if (!track) return send(res, 404, { error: 'Esa canción no está disponible' });
+      const ext = (path.extname(track.name) || '.mp3').slice(1).toLowerCase();
+      const mime = { mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', aac: 'audio/aac', ogg: 'audio/ogg', flac: 'audio/flac' }[ext] || 'application/octet-stream';
+      return streamFile(req, res, track.path, mime, track.name, 'inline');
+    }
+    let phraseDraftMatch = p.match(/^\/phrase-broll\/drafts\/([a-f0-9]{16})(?:\/(result|base|edit|queue|music|typography|regenerate|state))?$/);
     if (phraseDraftMatch) {
       const [, draftId, sub] = phraseDraftMatch;
       const draft = await getPhraseDraft(draftId);
@@ -159,6 +168,10 @@ const server = http.createServer(async (req, res) => {
         if (!file) return send(res, 409, { error: 'El render todavía no está listo' });
         return streamFile(req, res, file, 'video/mp4', `frase-broll-${draftId}.mp4`, 'inline');
       }
+      if (sub === 'base' && req.method === 'GET') {
+        try { const file = await phraseDraftBaseFile(draftId); if (!file) return send(res, 409, { error: 'El video todavía no está listo' }); return streamFile(req, res, file, 'video/mp4', `frase-broll-base-${draftId}.mp4`, 'inline'); }
+        catch (e) { return send(res, 500, { error: e.message }); }
+      }
       if (sub === 'edit' && req.method === 'POST') {
         let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
         try { const next = await editPhraseDraft(draftId, body); return send(res, 202, { id: next.id, status: next.status }); }
@@ -167,6 +180,16 @@ const server = http.createServer(async (req, res) => {
       if (sub === 'queue' && req.method === 'PATCH') {
         let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
         try { const next = await editQueuedPhrase(draftId, body.phrase); return send(res, 200, { ok: true, id: next.id, phrase: next.phrase, status: next.status }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
+      if (sub === 'music' && req.method === 'PATCH') {
+        let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        try { const next = await applyPhraseDraftMusic(draftId, body.musicName); return send(res, 200, { ok: true, id: next.id, musicName: next.musicName }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
+      if (sub === 'typography' && req.method === 'PATCH') {
+        let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        try { const next = await applyPhraseDraftTypography(draftId, body); return send(res, 200, { ok: true, id: next.id, phrase: next.phrase, fontStyle: next.fontStyle, musicName: next.musicName }); }
         catch (e) { return send(res, 409, { error: e.message }); }
       }
       if (sub === 'regenerate' && req.method === 'POST') {

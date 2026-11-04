@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import Busboy from 'busboy';
 import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
-import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, editPhraseDraft, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
+import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, updatePhraseClipTagsBatch, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, editPhraseDraft, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
@@ -92,6 +92,11 @@ const server = http.createServer(async (req, res) => {
 
     // ── Frase + B-roll: biblioteca, borradores y render propios, aislados de /jobs y /broll ──
     if (p === '/phrase-broll/library' && req.method === 'GET') return send(res, 200, { clips: await listPhraseClips() });
+    if (p === '/phrase-broll/library/tags' && req.method === 'PATCH') {
+      let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+      try { return send(res, 200, await updatePhraseClipTagsBatch(body.clips)); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+    }
     if (p === '/phrase-broll/library' && req.method === 'POST') {
       const temp = path.join(PHRASE_BROLL_ROOT, 'library', `.upload-${crypto.randomBytes(6).toString('hex')}`);
       let converted;

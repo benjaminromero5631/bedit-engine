@@ -108,14 +108,36 @@ export async function addPhraseClip({ filename, tags, info, sourceHash }) {
   });
 }
 export async function updatePhraseClipTags(id, tags) {
-  const entries = await libraryIndex();
-  const item = entries.find((x) => x.id === id);
-  if (!item) return null;
-  const labels = [...new Set((Array.isArray(tags) ? tags : []).map((x) => String(x).trim().slice(0, 40)).filter(Boolean))].slice(0, 16);
-  if (!labels.length) throw new Error('Cada clip necesita al menos una etiqueta');
-  item.tags = labels;
-  await writeJson(INDEX, entries);
-  return { id, tags: labels };
+  return serializeLibraryMutation(async () => {
+    const entries = await libraryIndex();
+    const item = entries.find((x) => x.id === id);
+    if (!item) return null;
+    const labels = [...new Set((Array.isArray(tags) ? tags : []).map((x) => String(x).trim().slice(0, 40)).filter(Boolean))].slice(0, 16);
+    if (!labels.length) throw new Error('Cada clip necesita al menos una etiqueta');
+    item.tags = labels;
+    await writeJson(INDEX, entries);
+    return { id, tags: labels };
+  });
+}
+export async function updatePhraseClipTagsBatch(updates) {
+  if (!Array.isArray(updates) || !updates.length) throw new Error('No hay etiquetas para guardar');
+  return serializeLibraryMutation(async () => {
+    const entries = await libraryIndex();
+    const seen = new Set();
+    const normalized = updates.map((update) => {
+      const id = String(update?.id || '');
+      if (!id || seen.has(id)) throw new Error('La selección de clips no es válida');
+      seen.add(id);
+      const item = entries.find((x) => x.id === id);
+      if (!item) throw new Error('Uno de los clips ya no existe. Actualiza la biblioteca e inténtalo de nuevo.');
+      const tags = [...new Set((Array.isArray(update.tags) ? update.tags : []).map((x) => String(x).trim().slice(0, 40)).filter(Boolean))].slice(0, 16);
+      if (!tags.length) throw new Error('Cada clip necesita al menos una etiqueta');
+      return { item, tags };
+    });
+    for (const { item, tags } of normalized) item.tags = tags;
+    await writeJson(INDEX, entries);
+    return { ok: true, count: normalized.length };
+  });
 }
 export async function phraseClipIsUsed(id) {
   for (const draft of await listPhraseDrafts()) if ((draft.events || []).some((event) => event.clipId === id)) return true;

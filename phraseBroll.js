@@ -278,31 +278,42 @@ async function remember(draft) {
   await writeJson(STATE, state);
 }
 
-function drawPhrase(phrase, outPath) {
+function drawPhrase(phrase, outPath, fontStyle = 'montserrat') {
   registerFonts();
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
-  const words = String(phrase || '').trim().split(/\s+/).filter(Boolean);
+  const weight = fontStyle === 'montserrat-heavy' ? 800 : 600;
+  const outlined = fontStyle === 'montserrat-heavy';
+  const manualLines = String(phrase || '').replace(/\r\n?/g, '\n').trim().split('\n');
   let px = 46;
   let lines = [];
   const wrap = (size) => {
-    ctx.font = `600 ${size}px Montserrat, sans-serif`;
+    ctx.font = `${weight} ${size}px Montserrat, sans-serif`;
     const result = [];
-    let line = '';
-    for (const word of words) {
-      const next = line ? line + ' ' + word : word;
-      if (line && ctx.measureText(next).width > W * 0.84) { result.push(line); line = word; }
-      else line = next;
+    for (const manualLine of manualLines) {
+      const words = manualLine.trim().split(/[\t ]+/).filter(Boolean);
+      if (!words.length) { result.push(''); continue; }
+      let line = '';
+      for (const word of words) {
+        const next = line ? line + ' ' + word : word;
+        if (line && ctx.measureText(next).width > W * 0.84) { result.push(line); line = word; }
+        else line = next;
+      }
+      if (line) result.push(line);
     }
-    if (line) result.push(line);
     return result;
   };
   lines = wrap(px);
-  while (lines.length > 3 && px > 30) { px -= 2; lines = wrap(px); }
+  while ((lines.some((line) => ctx.measureText(line).width > W * 0.88) || lines.length * px * 1.18 > H * 0.72) && px > 22) { px -= 2; lines = wrap(px); }
   const lineH = px * 1.18, y0 = H / 2 - ((lines.length - 1) * lineH) / 2;
-  ctx.save(); ctx.font = `600 ${px}px Montserrat, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+  ctx.save(); ctx.font = `${weight} ${px}px Montserrat, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
   ctx.shadowColor = 'rgba(0,0,0,0.72)'; ctx.shadowBlur = 5; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 2;
-  lines.forEach((line, i) => ctx.fillText(line, W / 2, y0 + i * lineH, W * 0.88));
+  if (outlined) { ctx.strokeStyle = 'rgba(0,0,0,0.9)'; ctx.lineWidth = 4; ctx.lineJoin = 'round'; }
+  lines.forEach((line, i) => {
+    if (!line) return;
+    if (outlined) ctx.strokeText(line, W / 2, y0 + i * lineH, W * 0.88);
+    ctx.fillText(line, W / 2, y0 + i * lineH, W * 0.88);
+  });
   ctx.restore();
   return fs.writeFile(outPath, canvas.toBuffer('image/png'));
 }
@@ -327,7 +338,7 @@ async function renderDraftFile(draft) {
   const musicIdx = draft.events.length;
   inputs.push('-stream_loop', '-1', '-i', music.path);
   const overlayPath = path.join(dir, 'phrase-overlay.png');
-  await drawPhrase(draft.phrase, overlayPath);
+  await drawPhrase(draft.phrase, overlayPath, draft.fontStyle || 'montserrat');
   const overlayIdx = musicIdx + 1;
   inputs.push('-loop', '1', '-framerate', String(FPS), '-i', overlayPath);
   const duration = draft.events.reduce((sum, event) => sum + Number(event.duration), 0);
@@ -403,7 +414,7 @@ export async function createPhraseDraft(phrase) {
   const { plan, music } = await chooseFreshMix(text);
   if (!music) throw new Error('No pude seleccionar música de la biblioteca de B‑Edit');
   const id = crypto.randomBytes(8).toString('hex');
-  const draft = { id, phrase: text, status: 'renderizando', progress: 0.03, approved: false, published: false, deleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), duration: plan.duration, events: plan.events, musicName: music.name, warning: plan.warning, error: null };
+  const draft = { id, phrase: text, fontStyle: crypto.randomInt(2) ? 'montserrat-heavy' : 'montserrat', status: 'renderizando', progress: 0.03, approved: false, published: false, deleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), duration: plan.duration, events: plan.events, musicName: music.name, warning: plan.warning, error: null };
   await fs.mkdir(draftDir(id), { recursive: true }); await saveDraft(draft); startRender(draft);
   return draft;
 }
@@ -411,7 +422,7 @@ export async function listPhraseDrafts() {
   const out = [];
   for (const id of await fs.readdir(DRAFTS).catch(() => [])) {
     const d = await readDraftRaw(id);
-    if (d && !d.deleted) out.push({ id: d.id, phrase: d.phrase, status: d.status, progress: d.progress, approved: !!d.approved, published: !!d.published, createdAt: d.createdAt, updatedAt: d.updatedAt, duration: d.duration, warning: d.warning, error: d.error, musicName: d.musicName, events: d.events });
+    if (d && !d.deleted) out.push({ id: d.id, phrase: d.phrase, fontStyle: d.fontStyle || 'montserrat', status: d.status, progress: d.progress, approved: !!d.approved, published: !!d.published, createdAt: d.createdAt, updatedAt: d.updatedAt, duration: d.duration, warning: d.warning, error: d.error, musicName: d.musicName, events: d.events });
   }
   return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }

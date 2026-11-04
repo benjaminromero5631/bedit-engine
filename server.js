@@ -145,7 +145,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/phrase-broll/drafts' && req.method === 'GET') return send(res, 200, { drafts: await listPhraseDrafts() });
     if (p === '/phrase-broll/drafts' && req.method === 'POST') {
       let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
-      try { const draft = await createPhraseDraft(body.phrase); return send(res, 202, { id: draft.id, status: draft.status }); }
+      try { const draft = await createPhraseDraft(body.phrase, body.musicMode); return send(res, 202, { id: draft.id, status: draft.status }); }
       catch (e) { return send(res, 400, { error: e.message }); }
     }
     let phraseMusicPreview = p.match(/^\/phrase-broll\/music-preview\/(.+)$/);

@@ -257,10 +257,11 @@ async function chooseMusic(exclude = []) {
   const name = shuffle(options.length ? options : tracks)[0];
   return musicByName(name);
 }
-async function chooseFreshMix(phrase, avoidMusic = []) {
+async function chooseFreshMix(phrase, avoidMusic = [], options = {}) {
   const state = await readState();
   const previous = new Set(state.recentCombos || []);
   let plan, music;
+  if (options.music === false) return { plan: await chooseComposition(phrase), music: null };
   for (let attempt = 0; attempt < 8; attempt++) {
     plan = await chooseComposition(phrase);
     music = await chooseMusic(avoidMusic.concat(attempt ? [music?.name].filter(Boolean) : []));
@@ -358,8 +359,9 @@ async function ensurePhraseBase(draft) {
 }
 
 async function composePhraseOutput({ draft, baseFile, outputFile, phrase = draft.phrase, fontStyle = draft.fontStyle || 'montserrat', musicName = draft.musicName }) {
-  const music = musicName ? await musicByName(musicName) : null;
-  if (!music) throw new Error('No pude acceder a la canción elegida; elige otra pista');
+  const selectedMusic = String(musicName || '');
+  const music = selectedMusic ? await musicByName(selectedMusic) : null;
+  if (selectedMusic && !music) throw new Error('No pude acceder a la canción elegida; elige otra pista');
   const duration = Number(draft.duration) || draft.events.reduce((sum, event) => sum + Number(event.duration), 0);
   const overlayPath = path.join(draftDir(draft.id), 'phrase-overlay.png');
   await drawPhrase(phrase, overlayPath, fontStyle);
@@ -367,10 +369,16 @@ async function composePhraseOutput({ draft, baseFile, outputFile, phrase = draft
   const graph = [
     '[1:v]format=rgba[text]',
     '[0:v][text]overlay=0:0:format=auto:shortest=1,format=yuv420p[vout]',
-    `[2:a]aresample=48000,aformat=channel_layouts=stereo,atrim=duration=${duration.toFixed(3)},asetpts=PTS-STARTPTS,loudnorm=I=-14:TP=-1.0:LRA=11,afade=t=out:st=${Math.max(0, duration - fade).toFixed(3)}:d=${fade.toFixed(3)},alimiter=limit=0.95:level=disabled[aout]`,
+    ...(music ? [`[2:a]aresample=48000,aformat=channel_layouts=stereo,atrim=duration=${duration.toFixed(3)},asetpts=PTS-STARTPTS,loudnorm=I=-14:TP=-1.0:LRA=11,afade=t=out:st=${Math.max(0, duration - fade).toFixed(3)}:d=${fade.toFixed(3)},alimiter=limit=0.95:level=disabled[aout]`] : []),
   ].join(';');
   await fs.rm(outputFile, { force: true });
-  await run('ffmpeg', ['-y', '-v', 'error', '-nostats', '-filter_complex_threads', process.env.THREADS || '2', '-i', baseFile, '-loop', '1', '-framerate', String(FPS), '-i', overlayPath, '-stream_loop', '-1', '-i', music.path, '-filter_complex', graph, '-map', '[vout]', '-map', '[aout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-threads', process.env.THREADS || '2', '-pix_fmt', 'yuv420p', '-r', String(FPS), '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-t', duration.toFixed(3), '-movflags', '+faststart', outputFile]);
+  const args = ['-y', '-v', 'error', '-nostats', '-filter_complex_threads', process.env.THREADS || '2', '-i', baseFile, '-loop', '1', '-framerate', String(FPS), '-i', overlayPath];
+  if (music) args.push('-stream_loop', '-1', '-i', music.path);
+  args.push('-filter_complex', graph, '-map', '[vout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-threads', process.env.THREADS || '2', '-pix_fmt', 'yuv420p', '-r', String(FPS), '-t', duration.toFixed(3), '-movflags', '+faststart');
+  if (music) args.push('-map', '[aout]', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000');
+  else args.push('-an');
+  args.push(outputFile);
+  await run('ffmpeg', args);
   const info = await probe(outputFile);
   if (Math.abs(info.duration - duration) > 0.12) throw new Error('El MP4 salió con una duración distinta a la mezcla');
   return info;
@@ -440,15 +448,16 @@ async function pumpPhraseRenders() {
   rendering = false;
 }
 
-export async function createPhraseDraft(phrase) {
+export async function createPhraseDraft(phrase, musicMode = 'random') {
   const text = String(phrase || '').trim();
   if (!text || text.length > 120) throw new Error('Escribe una frase de hasta 120 caracteres');
-  const tracks = await listMusic();
-  if (!tracks.length) throw new Error('No hay canciones en la biblioteca de B‑Edit; agrega música antes de crear un video');
-  const { plan, music } = await chooseFreshMix(text);
-  if (!music) throw new Error('No pude seleccionar música de la biblioteca de B‑Edit');
+  const silent = musicMode === 'none';
+  const tracks = silent ? [] : await listMusic();
+  if (!silent && !tracks.length) throw new Error('No hay canciones en la biblioteca de B‑Edit; agrega música antes de crear un video');
+  const { plan, music } = await chooseFreshMix(text, [], { music: !silent });
+  if (!silent && !music) throw new Error('No pude seleccionar música de la biblioteca de B‑Edit');
   const id = crypto.randomBytes(8).toString('hex');
-  const draft = { id, phrase: text, fontStyle: crypto.randomInt(2) ? 'montserrat-heavy' : 'montserrat', status: 'renderizando', progress: 0.03, approved: false, published: false, deleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), duration: plan.duration, events: plan.events, musicName: music.name, warning: plan.warning, error: null };
+  const draft = { id, phrase: text, fontStyle: crypto.randomInt(2) ? 'montserrat-heavy' : 'montserrat', status: 'renderizando', progress: 0.03, approved: false, published: false, deleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), duration: plan.duration, events: plan.events, musicName: music?.name || '', warning: plan.warning, error: null };
   await fs.mkdir(draftDir(id), { recursive: true }); await saveDraft(draft); startRender(draft);
   return draft;
 }
@@ -475,22 +484,26 @@ export async function applyPhraseDraftMusic(id, musicName) {
   const draft = await readDraftRaw(id);
   if (!draft || draft.deleted || draft.status !== 'listo') throw new Error('El video debe estar listo para cambiar la música');
   const trackName = String(musicName || '');
-  const track = await musicByName(trackName);
-  if (!track) throw new Error('Esa canción no está disponible');
-  if (track.name === draft.musicName) return draft;
+  const track = trackName ? await musicByName(trackName) : null;
+  if (trackName && !track) throw new Error('Esa canción no está disponible');
+  if ((track?.name || '') === (draft.musicName || '')) return draft;
   if (active.has(id)) throw new Error('El video está ocupado en otra operación');
   active.set(id, true);
   const dir = draftDir(id), finalFile = path.join(dir, 'final.mp4');
   const tempFile = path.join(dir, `final.music-${crypto.randomBytes(4).toString('hex')}.mp4`);
   try {
     const duration = Number(draft.duration) || (await probe(finalFile)).duration;
-    const fade = Math.min(0.8, Math.max(0.15, duration / 12));
-    const graph = `[1:a]aresample=48000,aformat=channel_layouts=stereo,atrim=duration=${duration.toFixed(3)},asetpts=PTS-STARTPTS,loudnorm=I=-14:TP=-1.0:LRA=11,afade=t=out:st=${Math.max(0, duration - fade).toFixed(3)}:d=${fade.toFixed(3)},alimiter=limit=0.95:level=disabled[aout]`;
-    await run('ffmpeg', ['-y', '-v', 'error', '-nostats', '-i', finalFile, '-stream_loop', '-1', '-i', track.path, '-filter_complex', graph, '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-t', duration.toFixed(3), '-movflags', '+faststart', tempFile]);
+    if (track) {
+      const fade = Math.min(0.8, Math.max(0.15, duration / 12));
+      const graph = `[1:a]aresample=48000,aformat=channel_layouts=stereo,atrim=duration=${duration.toFixed(3)},asetpts=PTS-STARTPTS,loudnorm=I=-14:TP=-1.0:LRA=11,afade=t=out:st=${Math.max(0, duration - fade).toFixed(3)}:d=${fade.toFixed(3)},alimiter=limit=0.95:level=disabled[aout]`;
+      await run('ffmpeg', ['-y', '-v', 'error', '-nostats', '-i', finalFile, '-stream_loop', '-1', '-i', track.path, '-filter_complex', graph, '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-t', duration.toFixed(3), '-movflags', '+faststart', tempFile]);
+    } else {
+      await run('ffmpeg', ['-y', '-v', 'error', '-nostats', '-i', finalFile, '-map', '0:v:0', '-c:v', 'copy', '-an', '-t', duration.toFixed(3), '-movflags', '+faststart', tempFile]);
+    }
     const info = await probe(tempFile);
     if (Math.abs(info.duration - duration) > 0.12) throw new Error('El MP4 salió con una duración distinta');
     await fs.rename(tempFile, finalFile);
-    draft.musicName = track.name; draft.approved = false; draft.published = false; draft.updatedAt = new Date().toISOString();
+    draft.musicName = track?.name || ''; draft.approved = false; draft.published = false; draft.updatedAt = new Date().toISOString();
     await saveDraft(draft);
     return draft;
   } finally {
@@ -506,8 +519,8 @@ export async function applyPhraseDraftTypography(id, input) {
   if (!phrase || phrase.length > 120) throw new Error('La frase debe tener entre 1 y 120 caracteres');
   const fontStyle = String(input.fontStyle || '');
   if (!['montserrat', 'montserrat-heavy'].includes(fontStyle)) throw new Error('Elige una tipografía disponible');
-  const musicName = String(input.musicName || draft.musicName || '');
-  if (!await musicByName(musicName)) throw new Error('Esa canción no está disponible');
+  const musicName = String(input.musicName ?? draft.musicName ?? '');
+  if (musicName && !await musicByName(musicName)) throw new Error('Esa canción no está disponible');
   if (active.has(id)) throw new Error('El video está ocupado en otra operación');
   if (fontStyle === (draft.fontStyle || 'montserrat') && phrase === draft.phrase && musicName === draft.musicName) return draft;
   active.set(id, true);
@@ -533,12 +546,12 @@ export async function editQueuedPhrase(id, phrase) {
   if (!text || text.length > 120) throw new Error('La frase debe tener entre 1 y 120 caracteres');
   return withQueueLock(id, async () => {
     if (!renderQueue.includes(queued) || queued.status !== 'en_cola') throw new Error('Este video ya empezó a renderizarse o ya no está en la cola.');
-    const { plan, music } = await chooseFreshMix(text, [queued.musicName]);
-    if (!music) throw new Error('No hay música disponible en B‑Edit');
+    const { plan, music } = await chooseFreshMix(text, [queued.musicName], { music: !!queued.musicName });
+    if (queued.musicName && !music) throw new Error('No hay música disponible en B‑Edit');
     const draft = await readDraftRaw(id);
     if (!draft || draft.deleted || draft.status !== 'en_cola') throw new Error('Este video ya no está en la cola.');
     draft.phrase = text; draft.events = plan.events; draft.duration = plan.duration;
-    draft.musicName = music.name; draft.warning = plan.warning; draft.progress = 0;
+    draft.musicName = music?.name || ''; draft.warning = plan.warning; draft.progress = 0;
     draft.updatedAt = new Date().toISOString();
     await saveDraft(draft);
     Object.assign(queued, draft);
@@ -571,7 +584,7 @@ export async function editPhraseDraft(id, input) {
   const duration = events.reduce((sum, e) => sum + e.duration, 0);
   if (duration < 8 || duration > 10) throw new Error('La duración final debe quedar entre 8 y 10 segundos');
   let musicName = input.musicName === undefined ? draft.musicName : String(input.musicName || '');
-  if (!musicName || !await musicByName(musicName)) throw new Error('Elige una canción disponible');
+  if (musicName && !await musicByName(musicName)) throw new Error('Elige una canción disponible');
   draft.phrase = phrase; draft.fontStyle = fontStyle; draft.events = events; draft.duration = duration; draft.musicName = musicName;
   draft.status = 'renderizando'; draft.progress = 0.03; draft.error = null; draft.approved = false; draft.published = false; draft.updatedAt = new Date().toISOString();
   await saveDraft(draft); startRender(draft);
@@ -581,9 +594,9 @@ export async function regeneratePhraseDraft(id) {
   const draft = await readDraftRaw(id);
   if (!draft || draft.deleted) return null;
   if (active.has(id)) throw new Error('El video todavía se está renderizando');
-  const { plan, music } = await chooseFreshMix(draft.phrase, [draft.musicName]);
-  if (!music) throw new Error('No hay música disponible en B‑Edit');
-  draft.events = plan.events; draft.duration = plan.duration; draft.musicName = music.name; draft.warning = plan.warning;
+  const { plan, music } = await chooseFreshMix(draft.phrase, [draft.musicName], { music: !!draft.musicName });
+  if (draft.musicName && !music) throw new Error('No hay música disponible en B‑Edit');
+  draft.events = plan.events; draft.duration = plan.duration; draft.musicName = music?.name || ''; draft.warning = plan.warning;
   draft.status = 'renderizando'; draft.progress = 0.03; draft.error = null; draft.approved = false; draft.published = false; draft.updatedAt = new Date().toISOString();
   await saveDraft(draft); startRender(draft);
   return draft;

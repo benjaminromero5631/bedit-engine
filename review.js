@@ -182,6 +182,8 @@ function drawList() {
   ['pendiente', 'aprobado', 'publicado', 'eliminado'].forEach(function (k) { h += '<button data-tab="' + k + '"' + (tab === k ? ' class="on"' : '') + '>' + names[k] + ' (' + counts[k] + ')</button>'; });
   h += '</div>';
   if (tab === 'eliminado') h += '<button id="clearDeleted" class="clear-deleted">Limpiar historial</button>';
+  var readyJobs = formatJobs.filter(function (j) { return tab === 'aprobado' && stateOf(j) === 'aprobado' && j.status === 'listo'; });
+  if (readyJobs.length) h += '<button id="downloadAll" class="download">⬇️ Descargar todos (' + readyJobs.length + ')</button><span id="downloadAllStatus" class="msg">Se descargarán como archivos separados y pasarán a Publicados.</span>';
   var recutCount = formatJobs.filter(function (j) { return stateOf(j) === 'pendiente' && j.status === 'listo'; }).length;
   if (tab === 'pendiente' && recutCount) h += '<button id="recutPending" class="recut-pending">Aplicar cortes más fuertes (' + recutCount + ')</button>';
   h += '</div>';
@@ -209,6 +211,19 @@ function drawList() {
       .then(function () { tab = 'publicado'; listNotice = 'Video marcado como publicado.'; showList(); })
       .catch(function (e) { el.disabled = false; el.textContent = '✓ Marcar publicado'; alert('No se pudo mover a Publicados: ' + e.message); });
   }; });
+  var downloadAll = document.getElementById('downloadAll');
+  if (downloadAll) downloadAll.onclick = function () {
+    downloadAll.disabled = true;
+    var count = readyJobs.length;
+    readyJobs.forEach(function (j, i) {
+      setTimeout(function () {
+        var a = document.createElement('a'); a.href = '/jobs/' + j.id + '/result?t=' + encodeURIComponent(TOKEN);
+        a.download = (j.name || j.id) + '.mp4'; document.body.appendChild(a); a.click(); a.remove();
+      }, i * 1200);
+      api('/jobs/' + j.id + '/state', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ state: 'publicado' }) });
+    });
+    setTimeout(function () { tab = 'publicado'; listNotice = 'Se iniciaron ' + count + ' descargas y los videos pasaron a Publicados.'; showList(); }, count * 1200 + 500);
+  };
   var clear = document.getElementById('clearDeleted');
   if (clear) clear.onclick = function () {
     if (!confirm('¿Eliminar definitivamente el historial de videos en Eliminados? Esto borra sus archivos y no se puede deshacer. Los videos pendientes y aprobados no se tocarán.')) return;

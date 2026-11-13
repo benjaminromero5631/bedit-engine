@@ -394,7 +394,7 @@ const server = http.createServer(async (req, res) => {
       if (!sub && req.method === 'DELETE') { await fsp.rm(dir, { recursive: true, force: true }); return send(res, 200, { ok: true }); }
       if (sub === 'result' && req.method === 'GET') {
         if (job.status !== 'listo') return send(res, 409, { error: `Aún no está listo (${job.status})` });
-        return streamFile(req, res, path.join(dir, 'final.mp4'), 'video/mp4', `${job.name || id}_bedit.mp4`);
+        return streamFile(req, res, path.join(dir, 'final.mp4'), 'video/mp4', `${job.name || id}_bedit.mp4`, 'inline');
       }
       if (sub === 'review' && req.method === 'GET') {
         const { callbackUrl, ...pub } = job;

@@ -125,19 +125,39 @@ async function notify(job) {
   console.error('No se pudo avisar al callback de', job.id);
 }
 
-/** Aviso al celular (ntfy). Solo si existe NTFY_TOPIC en el entorno. */
-export async function push(job) {
+/** Envío genérico a ntfy. Solo si existe NTFY_TOPIC en el entorno. */
+export async function notifyPhone({ title, body, tags = '', click }) {
   const topic = process.env.NTFY_TOPIC;
   if (!topic) return;
-  const ok = job.status === 'listo';
   const base = process.env.PUBLIC_URL || 'https://godkeys-bedit-engine.djq22s.easypanel.host';
-  const body = (job.name || job.id) + (ok ? '' : ': ' + String(job.error || 'error').slice(0, 150));
   try {
     await fetch('https://ntfy.sh/' + encodeURIComponent(topic), {
       method: 'POST', body, signal: AbortSignal.timeout(15000),
-      headers: { Title: ok ? 'Video listo para revisar' : 'Fallo un video', Tags: ok ? 'white_check_mark' : 'warning', Click: base + '/review' },
+      headers: { Title: title, Tags: tags, Click: click || (base + '/review') },
     });
   } catch (e) { console.error('ntfy falló', e.message); }
+}
+
+/** Aviso al celular (ntfy) cuando un trabajo termina. Solo si existe NTFY_TOPIC en el entorno. */
+export async function push(job) {
+  const ok = job.status === 'listo';
+  const body = (job.name || job.id) + (ok ? '' : ': ' + String(job.error || 'error').slice(0, 150));
+  await notifyPhone({ title: ok ? 'Video listo para revisar' : 'Fallo un video', body, tags: ok ? 'white_check_mark' : 'warning' });
+}
+
+/** Cuenta videos aprobados y sin publicar (Talking Head + Frase/B-roll), para el recordatorio periódico. */
+export async function countPendingApprovals(listPhraseDrafts) {
+  let count = 0;
+  for (const id of await fs.readdir(JOBS)) {
+    const job = await readJob(id);
+    if (job && job.approved && !job.published && !job.deleted) count++;
+  }
+  if (listPhraseDrafts) {
+    for (const d of await listPhraseDrafts()) {
+      if (d.approved && !d.published) count++;
+    }
+  }
+  return count;
 }
 
 async function pump() {

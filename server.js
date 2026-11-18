@@ -11,7 +11,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import Busboy from 'busboy';
-import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, JOBS, MUSIC, BROLL } from './jobs.js';
+import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, notifyPhone, countPendingApprovals, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
 import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, updatePhraseClipTagsBatch, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, phraseDraftBaseFile, editPhraseDraft, editQueuedPhrase, applyPhraseDraftMusic, applyPhraseDraftTypography, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
 
@@ -550,10 +550,27 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { console.error(e); if (!res.headersSent) send(res, 500, { error: e.message }); else res.end(); }
 });
 
+/** Recordatorio: entre 09:00 y 21:00 (hora de Chile), cada 2h, avisa si quedan videos aprobados sin publicar. */
+async function checkPendingApprovals() {
+  const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Santiago', hour: 'numeric', hour12: false }).format(new Date()));
+  if (hour < 9 || hour > 21) return;
+  try {
+    const count = await countPendingApprovals(listPhraseDrafts);
+    if (count > 0) {
+      await notifyPhone({
+        title: 'Videos esperando que los subas',
+        body: `Tienes ${count} video${count === 1 ? '' : 's'} aprobado${count === 1 ? '' : 's'} sin publicar`,
+        tags: 'bell',
+      });
+    }
+  } catch (e) { console.error('chequeo de pendientes falló', e.message); }
+}
+
 await initDirs();
 await initPhraseBroll();
 await cleanup();
 setInterval(() => cleanup().catch(() => {}), 6 * 3600 * 1000);
+setInterval(() => checkPendingApprovals().catch(() => {}), 2 * 3600 * 1000);
 server.listen(PORT, () => console.log(`bedit-engine escuchando en :${PORT}`));
 server.headersTimeout = 0; server.requestTimeout = 0;    // subidas grandes
 recover();

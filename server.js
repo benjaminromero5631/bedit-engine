@@ -550,7 +550,7 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { console.error(e); if (!res.headersSent) send(res, 500, { error: e.message }); else res.end(); }
 });
 
-/** Recordatorio: entre 09:00 y 21:00 (hora de Chile), cada 2h, avisa si quedan videos aprobados sin publicar. */
+/** Recordatorio: entre 09:00 y 21:00 (hora de Chile), cada 1h, avisa si quedan videos aprobados sin publicar. */
 async function checkPendingApprovals() {
   const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Santiago', hour: 'numeric', hour12: false }).format(new Date()));
   if (hour < 9 || hour > 21) return;
@@ -570,7 +570,7 @@ await initDirs();
 await initPhraseBroll();
 await cleanup();
 setInterval(() => cleanup().catch(() => {}), 6 * 3600 * 1000);
-setInterval(() => checkPendingApprovals().catch(() => {}), 2 * 3600 * 1000);
+setInterval(() => checkPendingApprovals().catch(() => {}), 1 * 3600 * 1000);
 server.listen(PORT, () => console.log(`bedit-engine escuchando en :${PORT}`));
 server.headersTimeout = 0; server.requestTimeout = 0;    // subidas grandes
 recover();

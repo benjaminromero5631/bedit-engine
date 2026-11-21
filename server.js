@@ -14,11 +14,14 @@ import Busboy from 'busboy';
 import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, notifyPhone, countPendingApprovals, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
 import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, updatePhraseClipTagsBatch, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, phraseDraftBaseFile, editPhraseDraft, editQueuedPhrase, applyPhraseDraftMusic, applyPhraseDraftTypography, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
+import { BROLL_VOZ_HTML } from './brollVozReview.js';
+import { initBrollVoz, listBrollVozDrafts, getBrollVozDraft, brollVozDraftFile, createBrollVozDraft, remixBrollVozDraft, replaceBrollVozClip, setBrollVozState, removeBrollVozDraft } from './brollVoz.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
 const PORT = Number(process.env.PORT || 8080);
 const PHRASE_BROLL_ROOT = path.join(process.env.DATA_DIR || '/data', 'phrase-broll');
+const BROLL_VOZ_ROOT = path.join(process.env.DATA_DIR || '/data', 'broll-voz');
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FONT_DIR = fs.existsSync(path.join(APP_DIR, '../fonts')) ? path.join(APP_DIR, '../fonts') : APP_DIR;
 
@@ -60,6 +63,30 @@ function receiveFile(req, target, field, maxFileSize = 3e9) {
   });
 }
 
+/** Multipart con varias tomas (campo "takes") + un archivo de voz (campo "voice"). */
+function receiveBrollVozUpload(req, tmpDir, maxFileSize = 1.5e9) {
+  return new Promise((resolve, reject) => {
+    const bb = Busboy({ headers: req.headers, limits: { fileSize: maxFileSize } });
+    const takeFiles = []; let voiceTmpPath = null; const pending = []; let tooBig = false;
+    bb.on('file', (name, stream, info) => {
+      if (name !== 'takes' && name !== 'voice') { stream.resume(); return; }
+      const tmp = path.join(tmpDir, `.upload-${crypto.randomBytes(6).toString('hex')}`);
+      const ws = fs.createWriteStream(tmp);
+      stream.on('limit', () => { tooBig = true; });
+      stream.pipe(ws);
+      pending.push(new Promise((r, j) => { ws.on('finish', r); ws.on('error', j); }).then(() => {
+        if (name === 'voice') voiceTmpPath = tmp; else takeFiles.push({ tmpPath: tmp, name: info.filename });
+      }));
+    });
+    bb.on('close', async () => {
+      try { await Promise.all(pending); if (tooBig) throw new Error('Algún archivo es demasiado grande'); resolve({ takeFiles, voiceTmpPath }); }
+      catch (e) { reject(e); }
+    });
+    bb.on('error', reject);
+    req.pipe(bb);
+  });
+}
+
 function streamFile(req, res, file, type, name, disposition = 'attachment') {
   let st;
   try { st = fs.statSync(file); } catch { return send(res, 404, { error: 'No existe' }); }
@@ -92,6 +119,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/assets/montserrat-latin-variable.woff2' && req.method === 'GET') return streamFile(req, res, path.join(FONT_DIR, 'montserrat-latin-variable.woff2'), 'font/woff2', 'montserrat-latin-variable.woff2', 'inline');
     if (p === '/review' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(REVIEW_HTML); }
     if (p === '/phrase-broll' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(PHRASE_BROLL_HTML); }
+    if (p === '/broll-voz' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(BROLL_VOZ_HTML); }
     if (!authed(req)) return send(res, 401, { error: 'No autorizado' });
 
     // ── Frase + B-roll: biblioteca, borradores y render propios, aislados de /jobs y /broll ──
@@ -203,6 +231,58 @@ const server = http.createServer(async (req, res) => {
       }
       if (!sub && req.method === 'DELETE') {
         try { const removed = await removePhraseDraft(draftId); return send(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'No existe ese borrador' }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
+    }
+
+    // ── B-roll + voz en off: aislado de Talking Head y de Frase + B-roll ──
+    if (p === '/broll-voz/drafts' && req.method === 'GET') return send(res, 200, { drafts: await listBrollVozDrafts() });
+    if (p === '/broll-voz/drafts' && req.method === 'POST') {
+      let uploaded;
+      try {
+        await fsp.mkdir(BROLL_VOZ_ROOT, { recursive: true });
+        uploaded = await receiveBrollVozUpload(req, BROLL_VOZ_ROOT);
+        if (!uploaded.voiceTmpPath) throw new Error('Falta la voz en off');
+        const draft = await createBrollVozDraft({ takeFiles: uploaded.takeFiles, voiceTmpPath: uploaded.voiceTmpPath });
+        return send(res, 202, { id: draft.id, status: draft.status });
+      } catch (e) {
+        if (uploaded) {
+          await Promise.all([
+            ...uploaded.takeFiles.map((t) => fsp.rm(t.tmpPath, { force: true })),
+            uploaded.voiceTmpPath ? fsp.rm(uploaded.voiceTmpPath, { force: true }) : null,
+          ]);
+        }
+        return send(res, 400, { error: e.message });
+      }
+    }
+    let brollVozMatch = p.match(/^\/broll-voz\/drafts\/([a-f0-9]{16})(?:\/(result|remix|replace|state))?$/);
+    if (brollVozMatch) {
+      const [, draftId, sub] = brollVozMatch;
+      if (!sub && req.method === 'GET') {
+        const draft = await getBrollVozDraft(draftId);
+        return send(res, draft ? 200 : 404, draft ? { draft } : { error: 'No existe ese borrador' });
+      }
+      if (sub === 'result' && req.method === 'GET') {
+        const file = await brollVozDraftFile(draftId);
+        if (!file) return send(res, 409, { error: 'El render todavía no está listo' });
+        return streamFile(req, res, file, 'video/mp4', `broll-voz-${draftId}.mp4`, 'inline');
+      }
+      if (sub === 'remix' && req.method === 'POST') {
+        try { const next = await remixBrollVozDraft(draftId); return send(res, next ? 202 : 404, next ? { ok: true, status: next.status } : { error: 'No existe ese borrador' }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
+      if (sub === 'replace' && req.method === 'POST') {
+        let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        try { const next = await replaceBrollVozClip(draftId, body.index); return send(res, next ? 202 : 404, next ? { ok: true, status: next.status } : { error: 'No existe ese borrador' }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
+      if (sub === 'state' && req.method === 'POST') {
+        let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        try { const next = await setBrollVozState(draftId, body.state); return send(res, next ? 200 : 404, next ? { ok: true, approved: next.approved, published: next.published } : { error: 'No existe ese borrador' }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
+      if (!sub && req.method === 'DELETE') {
+        try { const removed = await removeBrollVozDraft(draftId); return send(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'No existe ese borrador' }); }
         catch (e) { return send(res, 409, { error: e.message }); }
       }
     }
@@ -568,6 +648,7 @@ async function checkPendingApprovals() {
 
 await initDirs();
 await initPhraseBroll();
+await initBrollVoz();
 await cleanup();
 setInterval(() => cleanup().catch(() => {}), 6 * 3600 * 1000);
 setInterval(() => checkPendingApprovals().catch(() => {}), 1 * 3600 * 1000);

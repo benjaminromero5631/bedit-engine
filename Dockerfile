@@ -15,7 +15,7 @@ RUN npm install --omit=dev
 # Los archivos están sueltos en el repo; aquí se ordenan en sus carpetas
 RUN mkdir -p src/core python fonts
 COPY cuts.js config.js draw.js plan.js ./src/core/
-COPY server.js jobs.js pipeline.js render.js media.js transcribe.js fonts.js review.js broll.js phraseBroll.js phraseBrollReview.js collageImages.js collageImagesReview.js ./src/
+COPY server.js jobs.js pipeline.js render.js media.js transcribe.js fonts.js review.js broll.js phraseBroll.js phraseBrollReview.js collageImages.js collageImagesReview.js collageSelect.js collageRender.js collage.js collageReview.js ./src/
 COPY transcribe.py ./python/
 COPY *.woff2 ./fonts/
 COPY *.ttf ./fonts/

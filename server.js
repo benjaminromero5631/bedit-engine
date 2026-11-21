@@ -5,6 +5,7 @@ import { probe, run } from './media.js';
 import { REVIEW_HTML } from './review.js';
 import { PHRASE_BROLL_HTML } from './phraseBrollReview.js';
 import { COLLAGE_IMAGES_HTML } from './collageImagesReview.js';
+import { COLLAGE_HTML } from './collageReview.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -16,12 +17,14 @@ import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, c
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
 import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, updatePhraseClipTagsBatch, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, phraseDraftBaseFile, editPhraseDraft, editQueuedPhrase, applyPhraseDraftMusic, applyPhraseDraftTypography, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
 import { initCollageImages, listCollageImages, collageImageFile, addCollageImage, updateCollageImageTags, updateCollageImageTagsBatch, deleteCollageImage } from './collageImages.js';
+import { initCollage, listCollageDrafts, getCollageDraft, collageDraftFile, createCollageDraft, editCollageDraft, regenerateCollageDraft, setCollageDraftState, removeCollageDraft } from './collage.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
 const PORT = Number(process.env.PORT || 8080);
 const PHRASE_BROLL_ROOT = path.join(process.env.DATA_DIR || '/data', 'phrase-broll');
 const COLLAGE_IMAGES_ROOT = path.join(process.env.DATA_DIR || '/data', 'collage-images');
+const COLLAGE_ROOT = path.join(process.env.DATA_DIR || '/data', 'collage');
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FONT_DIR = fs.existsSync(path.join(APP_DIR, '../fonts')) ? path.join(APP_DIR, '../fonts') : APP_DIR;
 
@@ -96,6 +99,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/review' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(REVIEW_HTML); }
     if (p === '/phrase-broll' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(PHRASE_BROLL_HTML); }
     if (p === '/collage-images' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(COLLAGE_IMAGES_HTML); }
+    if (p === '/collage' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(COLLAGE_HTML); }
     if (!authed(req)) return send(res, 401, { error: 'No autorizado' });
 
     // ── Frase + B-roll: biblioteca, borradores y render propios, aislados de /jobs y /broll ──
@@ -252,6 +256,54 @@ const server = http.createServer(async (req, res) => {
     if (collageImageMatch && !collageImageMatch[2] && req.method === 'DELETE') {
       const removed = await deleteCollageImage(collageImageMatch[1]);
       return send(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'No existe esa imagen' });
+    }
+
+    // ── Formato "Talking head + collage de imágenes": borradores y render propios, aislados de Talking Head ──
+    if (p === '/collage/drafts' && req.method === 'GET') return send(res, 200, { drafts: await listCollageDrafts() });
+    if (p === '/collage/drafts' && req.method === 'POST') {
+      const temp = path.join(COLLAGE_ROOT, `.upload-${crypto.randomBytes(6).toString('hex')}`);
+      try {
+        const uploaded = await receiveFile(req, temp, 'file', 500 * 1024 * 1024);
+        const sourceName = uploaded.filename || '';
+        const extMatch = /\.(mp4|mov|m4v)$/i.exec(sourceName);
+        if (!extMatch) throw new Error('Sube un video MP4 o MOV');
+        const draft = await createCollageDraft({ filename: temp, ext: extMatch[1].toLowerCase(), title: uploaded.fields.title });
+        return send(res, 202, { id: draft.id, status: draft.status });
+      } catch (e) {
+        await fsp.rm(temp, { force: true });
+        return send(res, 400, { error: e.message });
+      }
+    }
+    let collageDraftMatch = p.match(/^\/collage\/drafts\/([a-f0-9]{16})(?:\/(result|regenerate|state))?$/);
+    if (collageDraftMatch) {
+      const [, draftId, sub] = collageDraftMatch;
+      if (!sub && req.method === 'GET') {
+        const draft = await getCollageDraft(draftId);
+        return send(res, draft ? 200 : 404, draft ? { draft } : { error: 'No existe ese borrador' });
+      }
+      if (sub === 'result' && req.method === 'GET') {
+        const file = await collageDraftFile(draftId);
+        if (!file) return send(res, 409, { error: 'El render todavía no está listo' });
+        return streamFile(req, res, file, 'video/mp4', `collage-${draftId}.mp4`, 'inline');
+      }
+      if (!sub && req.method === 'PATCH') {
+        let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        try { const next = await editCollageDraft(draftId, body); return send(res, 202, { id: next.id, status: next.status }); }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if (sub === 'regenerate' && req.method === 'POST') {
+        try { const next = await regenerateCollageDraft(draftId); return send(res, 202, { id: next.id, status: next.status }); }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if (sub === 'state' && req.method === 'POST') {
+        let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+        try { const next = await setCollageDraftState(draftId, body.state); return send(res, 200, { ok: true, approved: next.approved, published: next.published }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
+      if (!sub && req.method === 'DELETE') {
+        try { const removed = await removeCollageDraft(draftId); return send(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'No existe ese borrador' }); }
+        catch (e) { return send(res, 409, { error: e.message }); }
+      }
     }
 
     // ── música ──
@@ -616,6 +668,7 @@ async function checkPendingApprovals() {
 await initDirs();
 await initPhraseBroll();
 await initCollageImages();
+await initCollage();
 await cleanup();
 setInterval(() => cleanup().catch(() => {}), 6 * 3600 * 1000);
 setInterval(() => checkPendingApprovals().catch(() => {}), 1 * 3600 * 1000);

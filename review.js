@@ -97,7 +97,7 @@ button.dng{color:var(--usr)}
 .mtrk .x{color:var(--mut);cursor:pointer}
 .mtrk .x:hover{color:var(--usr)}
 </style></head><body>
-<header><h1>B Edit · Revisión</h1><button id="phraseMode">Frase + B-roll</button><button id="refresh">Actualizar</button></header>
+<header><h1>B Edit · Revisión</h1><button id="phraseMode">Frase + B-roll</button><button id="collageLib">Imágenes · Collage</button><button id="refresh">Actualizar</button></header>
 <main id="app"></main>
 <script>
 var TOKEN = '';
@@ -679,6 +679,7 @@ function apply() {
     .catch(function (e) { document.getElementById('info').textContent = 'Error: ' + e.message; btn.disabled = false; });
 }
 document.getElementById('phraseMode').onclick = function () { window.location.href = '/phrase-broll'; };
+document.getElementById('collageLib').onclick = function () { window.location.href = '/collage-images'; };
 document.getElementById('refresh').onclick = function () { cur ? openJob(cur) : showList(); };
 showList();
 </script></body></html>`;

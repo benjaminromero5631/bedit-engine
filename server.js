@@ -4,6 +4,7 @@ import { applyMusicOnly, quantizeKeep } from './render.js';
 import { probe, run } from './media.js';
 import { REVIEW_HTML } from './review.js';
 import { PHRASE_BROLL_HTML } from './phraseBrollReview.js';
+import { COLLAGE_IMAGES_HTML } from './collageImagesReview.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -14,11 +15,13 @@ import Busboy from 'busboy';
 import { initDirs, createJob, updateJob, enqueue, cancelJob, readJob, recover, cleanup, listMusic, musicByName, getDefaultMusic, setDefaultMusic, pickMusic, push, notifyPhone, countPendingApprovals, JOBS, MUSIC, BROLL } from './jobs.js';
 import { addBroll, brollFile, deleteBroll, listBroll, suggestBroll } from './broll.js';
 import { initPhraseBroll, listPhraseClips, phraseClipFile, addPhraseClip, phraseFileDigest, updatePhraseClipTags, updatePhraseClipTagsBatch, deletePhraseClip, createPhraseDraft, listPhraseDrafts, getPhraseDraft, phraseDraftBaseFile, editPhraseDraft, editQueuedPhrase, applyPhraseDraftMusic, applyPhraseDraftTypography, regeneratePhraseDraft, setPhraseDraftState, removePhraseDraft, phraseDraftFile } from './phraseBroll.js';
+import { initCollageImages, listCollageImages, collageImageFile, addCollageImage, updateCollageImageTags, updateCollageImageTagsBatch, deleteCollageImage } from './collageImages.js';
 
 const TOKEN = process.env.BEDIT_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error('Falta BEDIT_TOKEN (mínimo 16 caracteres)'); process.exit(1); }
 const PORT = Number(process.env.PORT || 8080);
 const PHRASE_BROLL_ROOT = path.join(process.env.DATA_DIR || '/data', 'phrase-broll');
+const COLLAGE_IMAGES_ROOT = path.join(process.env.DATA_DIR || '/data', 'collage-images');
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FONT_DIR = fs.existsSync(path.join(APP_DIR, '../fonts')) ? path.join(APP_DIR, '../fonts') : APP_DIR;
 
@@ -92,6 +95,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/assets/montserrat-latin-variable.woff2' && req.method === 'GET') return streamFile(req, res, path.join(FONT_DIR, 'montserrat-latin-variable.woff2'), 'font/woff2', 'montserrat-latin-variable.woff2', 'inline');
     if (p === '/review' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(REVIEW_HTML); }
     if (p === '/phrase-broll' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(PHRASE_BROLL_HTML); }
+    if (p === '/collage-images' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(COLLAGE_IMAGES_HTML); }
     if (!authed(req)) return send(res, 401, { error: 'No autorizado' });
 
     // ── Frase + B-roll: biblioteca, borradores y render propios, aislados de /jobs y /broll ──
@@ -205,6 +209,49 @@ const server = http.createServer(async (req, res) => {
         try { const removed = await removePhraseDraft(draftId); return send(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'No existe ese borrador' }); }
         catch (e) { return send(res, 409, { error: e.message }); }
       }
+    }
+
+    // ── Biblioteca de imágenes para "Talking head + collage de imágenes": exclusiva de ese formato ──
+    if (p === '/collage-images/library' && req.method === 'GET') return send(res, 200, { images: await listCollageImages() });
+    if (p === '/collage-images/library/tags' && req.method === 'PATCH') {
+      let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+      try { return send(res, 200, await updateCollageImageTagsBatch(body.images)); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+    }
+    if (p === '/collage-images/library' && req.method === 'POST') {
+      const temp = path.join(COLLAGE_IMAGES_ROOT, `.upload-${crypto.randomBytes(6).toString('hex')}`);
+      try {
+        const uploaded = await receiveFile(req, temp, 'file', 25 * 1024 * 1024);
+        const sourceName = uploaded.filename || '';
+        const extMatch = /\.(jpe?g|png|webp)$/i.exec(sourceName);
+        if (!extMatch) throw new Error('Sube una imagen JPG, PNG o WebP');
+        const ext = extMatch[1].toLowerCase().replace('jpeg', 'jpg');
+        let tags;
+        try { tags = JSON.parse(uploaded.fields.tags || '[]'); } catch { throw new Error('Las etiquetas no tienen un formato válido'); }
+        if (!Array.isArray(tags) || !tags.some((x) => String(x).trim())) throw new Error('Agrega al menos una etiqueta a esta imagen');
+        const image = await addCollageImage({ filename: temp, tags, ext });
+        return send(res, 201, { ok: true, image });
+      } catch (e) {
+        await fsp.rm(temp, { force: true });
+        return send(res, 400, { error: e.message });
+      }
+    }
+    let collageImageMatch = p.match(/^\/collage-images\/library\/([a-f0-9]{16})(?:\/(file))?$/);
+    if (collageImageMatch && collageImageMatch[2] === 'file' && req.method === 'GET') {
+      const file = await collageImageFile(collageImageMatch[1]);
+      if (!file) return send(res, 404, { error: 'No existe esa imagen' });
+      const ext = path.extname(file).slice(1).toLowerCase();
+      const mime = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }[ext] || 'application/octet-stream';
+      return streamFile(req, res, file, mime, path.basename(file), 'inline');
+    }
+    if (collageImageMatch && !collageImageMatch[2] && req.method === 'PATCH') {
+      let body; try { body = JSON.parse((await readBody(req)).toString('utf8')); } catch { return send(res, 400, { error: 'Cuerpo no es JSON' }); }
+      try { const image = await updateCollageImageTags(collageImageMatch[1], body.tags); return send(res, image ? 200 : 404, image ? { ok: true, image } : { error: 'No existe esa imagen' }); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+    }
+    if (collageImageMatch && !collageImageMatch[2] && req.method === 'DELETE') {
+      const removed = await deleteCollageImage(collageImageMatch[1]);
+      return send(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'No existe esa imagen' });
     }
 
     // ── música ──
@@ -568,6 +615,7 @@ async function checkPendingApprovals() {
 
 await initDirs();
 await initPhraseBroll();
+await initCollageImages();
 await cleanup();
 setInterval(() => cleanup().catch(() => {}), 6 * 3600 * 1000);
 setInterval(() => checkPendingApprovals().catch(() => {}), 1 * 3600 * 1000);
